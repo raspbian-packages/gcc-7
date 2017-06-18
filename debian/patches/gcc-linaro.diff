@@ -1,0 +1,673 @@
+# DP: Changes for the Linaro 7-2017.05 snapshot.
+
+MSG=$(git log origin/linaro/gcc-7-branch --format=format:"%s" -n 1 --grep "Merge branches"); SVN=${MSG##* }; git log origin/gcc-7-branch --format=format:"%H" -n 1 --grep "gcc-7-branch@${SVN%.}"
+
+LANG=C git diff --no-renames 4f4f68662706100e1fb1bb4e73ee50061d626f81 ffc354ab2f2465daf14068b1ad2c7afec87a1c9e \
+ | egrep -v '^(diff|index) ' \
+ | filterdiff --strip=1 --addoldprefix=a/src/  --addnewprefix=b/src/ \
+ | sed 's,a/src//dev/null,/dev/null,'
+
+Index: b/src/.gitreview
+===================================================================
+--- /dev/null
++++ b/src/.gitreview
+@@ -0,0 +1,5 @@
++[gerrit]
++host=review.linaro.org
++port=29418
++project=toolchain/gcc
++defaultbranch=linaro-local/gcc-7-integration-branch
+Index: b/src/gcc/LINARO-VERSION
+===================================================================
+--- /dev/null
++++ b/src/gcc/LINARO-VERSION
+@@ -0,0 +1 @@
++7.1-2017.05~dev
+Index: b/src/gcc/Makefile.in
+===================================================================
+--- a/src/gcc/Makefile.in
++++ b/src/gcc/Makefile.in
+@@ -845,10 +845,12 @@ BASEVER     := $(srcdir)/BASE-VER  # 4.x
+ DEVPHASE    := $(srcdir)/DEV-PHASE # experimental, prerelease, ""
+ DATESTAMP   := $(srcdir)/DATESTAMP # YYYYMMDD or empty
+ REVISION    := $(srcdir)/REVISION  # [BRANCH revision XXXXXX]
++LINAROVER   := $(srcdir)/LINARO-VERSION # M.x-YYYY.MM[-S][~dev]
+ 
+ BASEVER_c   := $(shell cat $(BASEVER))
+ DEVPHASE_c  := $(shell cat $(DEVPHASE))
+ DATESTAMP_c := $(shell cat $(DATESTAMP))
++LINAROVER_c := $(shell cat $(LINAROVER))
+ 
+ ifeq (,$(wildcard $(REVISION)))
+ REVISION_c  :=
+@@ -875,6 +877,7 @@ DATESTAMP_s := \
+   "\"$(if $(DEVPHASE_c)$(filter-out 0,$(PATCHLEVEL_c)), $(DATESTAMP_c))\""
+ PKGVERSION_s:= "\"@PKGVERSION@\""
+ BUGURL_s    := "\"@REPORT_BUGS_TO@\""
++LINAROVER_s := "\"$(LINAROVER_c)\""
+ 
+ PKGVERSION  := @PKGVERSION@
+ BUGURL_TEXI := @REPORT_BUGS_TEXI@
+@@ -2801,8 +2804,9 @@ PREPROCESSOR_DEFINES = \
+   -DSTANDARD_EXEC_PREFIX=\"$(libdir)/gcc/\" \
+   @TARGET_SYSTEM_ROOT_DEFINE@
+ 
+-CFLAGS-cppbuiltin.o += $(PREPROCESSOR_DEFINES) -DBASEVER=$(BASEVER_s)
+-cppbuiltin.o: $(BASEVER)
++CFLAGS-cppbuiltin.o += $(PREPROCESSOR_DEFINES) -DBASEVER=$(BASEVER_s) \
++	-DLINAROVER=$(LINAROVER_s)
++cppbuiltin.o: $(BASEVER) $(LINAROVER)
+ 
+ CFLAGS-cppdefault.o += $(PREPROCESSOR_DEFINES)
+ 
+Index: b/src/gcc/config.gcc
+===================================================================
+--- a/src/gcc/config.gcc
++++ b/src/gcc/config.gcc
+@@ -3791,34 +3791,19 @@ case "${target}" in
+ 		# Add extra multilibs
+ 		if test "x$with_multilib_list" != x; then
+ 			arm_multilibs=`echo $with_multilib_list | sed -e 's/,/ /g'`
+-			case ${arm_multilibs} in
+-			aprofile)
+-				# Note that arm/t-aprofile is a
+-				# stand-alone make file fragment to be
+-				# used only with itself.  We do not
+-				# specifically use the
+-				# TM_MULTILIB_OPTION framework because
+-				# this shorthand is more
+-				# pragmatic.
+-				tmake_profile_file="arm/t-aprofile"
+-				;;
+-			rmprofile)
+-				# Note that arm/t-rmprofile is a
+-				# stand-alone make file fragment to be
+-				# used only with itself.  We do not
+-				# specifically use the
+-				# TM_MULTILIB_OPTION framework because
+-				# this shorthand is more
+-				# pragmatic.
+-				tmake_profile_file="arm/t-rmprofile"
+-				;;
+-			default)
+-				;;
+-			*)
+-				echo "Error: --with-multilib-list=${with_multilib_list} not supported." 1>&2
+-				exit 1
+-				;;
+-			esac
++			if test "x${arm_multilibs}" != xdefault ; then
++				for arm_multilib in ${arm_multilibs}; do
++					case ${arm_multilib} in
++					aprofile|rmprofile)
++						tmake_profile_file="arm/t-multilib"
++						;;
++					*)
++						echo "Error: --with-multilib-list=${with_multilib_list} not supported." 1>&2
++						exit 1
++						;;
++					esac
++				done
++			fi
+ 
+ 			if test "x${tmake_profile_file}" != x ; then
+ 				# arm/t-aprofile and arm/t-rmprofile are only
+@@ -3835,6 +3820,7 @@ case "${target}" in
+ 				fi
+ 
+ 				tmake_file="${tmake_file} ${tmake_profile_file}"
++				TM_MULTILIB_CONFIG="$with_multilib_list"
+ 			fi
+ 		fi
+ 		;;
+Index: b/src/gcc/config/aarch64/aarch64.c
+===================================================================
+--- a/src/gcc/config/aarch64/aarch64.c
++++ b/src/gcc/config/aarch64/aarch64.c
+@@ -193,10 +193,10 @@ static const struct aarch64_flag_desc aa
+ static const struct cpu_addrcost_table generic_addrcost_table =
+ {
+     {
+-      0, /* hi  */
++      1, /* hi  */
+       0, /* si  */
+       0, /* di  */
+-      0, /* ti  */
++      1, /* ti  */
+     },
+   0, /* pre_modify  */
+   0, /* post_modify  */
+@@ -538,8 +538,8 @@ static const struct tune_params generic_
+   2, /* issue_rate  */
+   (AARCH64_FUSE_AES_AESMC), /* fusible_ops  */
+   8,	/* function_align.  */
+-  8,	/* jump_align.  */
+-  4,	/* loop_align.  */
++  4,	/* jump_align.  */
++  8,	/* loop_align.  */
+   2,	/* int_reassoc_width.  */
+   4,	/* fp_reassoc_width.  */
+   1,	/* vec_reassoc_width.  */
+@@ -547,7 +547,7 @@ static const struct tune_params generic_
+   2,	/* min_div_recip_mul_df.  */
+   0,	/* max_case_values.  */
+   0,	/* cache_line_size.  */
+-  tune_params::AUTOPREFETCHER_OFF,	/* autoprefetcher_model.  */
++  tune_params::AUTOPREFETCHER_WEAK,	/* autoprefetcher_model.  */
+   (AARCH64_EXTRA_TUNE_NONE)	/* tune_flags.  */
+ };
+ 
+Index: b/src/gcc/config/arm/arm-builtins.c
+===================================================================
+--- a/src/gcc/config/arm/arm-builtins.c
++++ b/src/gcc/config/arm/arm-builtins.c
+@@ -1893,10 +1893,10 @@ arm_init_builtins (void)
+ 	= build_function_type_list (unsigned_type_node, NULL);
+ 
+       arm_builtin_decls[ARM_BUILTIN_GET_FPSCR]
+-	= add_builtin_function ("__builtin_arm_ldfscr", ftype_get_fpscr,
++	= add_builtin_function ("__builtin_arm_get_fpscr", ftype_get_fpscr,
+ 				ARM_BUILTIN_GET_FPSCR, BUILT_IN_MD, NULL, NULL_TREE);
+       arm_builtin_decls[ARM_BUILTIN_SET_FPSCR]
+-	= add_builtin_function ("__builtin_arm_stfscr", ftype_set_fpscr,
++	= add_builtin_function ("__builtin_arm_set_fpscr", ftype_set_fpscr,
+ 				ARM_BUILTIN_SET_FPSCR, BUILT_IN_MD, NULL, NULL_TREE);
+     }
+ 
+Index: b/src/gcc/config/arm/arm.c
+===================================================================
+--- a/src/gcc/config/arm/arm.c
++++ b/src/gcc/config/arm/arm.c
+@@ -28236,17 +28236,32 @@ arm_expand_compare_and_swap (rtx operand
+       gcc_unreachable ();
+     }
+ 
+-  switch (mode)
++  if (TARGET_THUMB1)
+     {
+-    case QImode: gen = gen_atomic_compare_and_swapqi_1; break;
+-    case HImode: gen = gen_atomic_compare_and_swaphi_1; break;
+-    case SImode: gen = gen_atomic_compare_and_swapsi_1; break;
+-    case DImode: gen = gen_atomic_compare_and_swapdi_1; break;
+-    default:
+-      gcc_unreachable ();
++      switch (mode)
++	{
++	case QImode: gen = gen_atomic_compare_and_swapt1qi_1; break;
++	case HImode: gen = gen_atomic_compare_and_swapt1hi_1; break;
++	case SImode: gen = gen_atomic_compare_and_swapt1si_1; break;
++	case DImode: gen = gen_atomic_compare_and_swapt1di_1; break;
++	default:
++	  gcc_unreachable ();
++	}
++    }
++  else
++    {
++      switch (mode)
++	{
++	case QImode: gen = gen_atomic_compare_and_swap32qi_1; break;
++	case HImode: gen = gen_atomic_compare_and_swap32hi_1; break;
++	case SImode: gen = gen_atomic_compare_and_swap32si_1; break;
++	case DImode: gen = gen_atomic_compare_and_swap32di_1; break;
++	default:
++	  gcc_unreachable ();
++	}
+     }
+ 
+-  bdst = TARGET_THUMB1 ? bval : gen_rtx_REG (CCmode, CC_REGNUM);
++  bdst = TARGET_THUMB1 ? bval : gen_rtx_REG (CC_Zmode, CC_REGNUM);
+   emit_insn (gen (bdst, rval, mem, oldval, newval, is_weak, mod_s, mod_f));
+ 
+   if (mode == QImode || mode == HImode)
+Index: b/src/gcc/config/arm/iterators.md
+===================================================================
+--- a/src/gcc/config/arm/iterators.md
++++ b/src/gcc/config/arm/iterators.md
+@@ -45,6 +45,9 @@
+ ;; A list of the 32bit and 64bit integer modes
+ (define_mode_iterator SIDI [SI DI])
+ 
++;; A list of atomic compare and swap success return modes
++(define_mode_iterator CCSI [(CC_Z "TARGET_32BIT") (SI "TARGET_THUMB1")])
++
+ ;; A list of modes which the VFP unit can handle
+ (define_mode_iterator SDF [(SF "") (DF "TARGET_VFP_DOUBLE")])
+ 
+@@ -411,6 +414,10 @@
+ ;; Mode attributes
+ ;;----------------------------------------------------------------------------
+ 
++;; Determine name of atomic compare and swap from success result mode.  This
++;; distinguishes between 16-bit Thumb and 32-bit Thumb/ARM.
++(define_mode_attr arch [(CC_Z "32") (SI "t1")])
++
+ ;; Determine element size suffix from vector mode.
+ (define_mode_attr MMX_char [(V8QI "b") (V4HI "h") (V2SI "w") (DI "d")])
+ 
+Index: b/src/gcc/config/arm/sync.md
+===================================================================
+--- a/src/gcc/config/arm/sync.md
++++ b/src/gcc/config/arm/sync.md
+@@ -191,9 +191,9 @@
+ 
+ ;; Constraints of this pattern must be at least as strict as those of the
+ ;; cbranchsi operations in thumb1.md and aim to be as permissive.
+-(define_insn_and_split "atomic_compare_and_swap<mode>_1"
+-  [(set (match_operand 0 "cc_register_operand" "=&c,&l,&l,&l")		;; bool out
+-	(unspec_volatile:CC_Z [(const_int 0)] VUNSPEC_ATOMIC_CAS))
++(define_insn_and_split "atomic_compare_and_swap<CCSI:arch><NARROW:mode>_1"
++  [(set (match_operand:CCSI 0 "cc_register_operand" "=&c,&l,&l,&l")	;; bool out
++	(unspec_volatile:CCSI [(const_int 0)] VUNSPEC_ATOMIC_CAS))
+    (set (match_operand:SI 1 "s_register_operand" "=&r,&l,&0,&l*h")	;; val out
+ 	(zero_extend:SI
+ 	  (match_operand:NARROW 2 "mem_noofs_operand" "+Ua,Ua,Ua,Ua")))	;; memory
+@@ -223,9 +223,9 @@
+ 
+ ;; Constraints of this pattern must be at least as strict as those of the
+ ;; cbranchsi operations in thumb1.md and aim to be as permissive.
+-(define_insn_and_split "atomic_compare_and_swap<mode>_1"
+-  [(set (match_operand 0 "cc_register_operand" "=&c,&l,&l,&l")		;; bool out
+-	(unspec_volatile:CC_Z [(const_int 0)] VUNSPEC_ATOMIC_CAS))
++(define_insn_and_split "atomic_compare_and_swap<CCSI:arch><SIDI:mode>_1"
++  [(set (match_operand:CCSI 0 "cc_register_operand" "=&c,&l,&l,&l")	;; bool out
++	(unspec_volatile:CCSI [(const_int 0)] VUNSPEC_ATOMIC_CAS))
+    (set (match_operand:SIDI 1 "s_register_operand" "=&r,&l,&0,&l*h")	;; val out
+ 	(match_operand:SIDI 2 "mem_noofs_operand" "+Ua,Ua,Ua,Ua"))	;; memory
+    (set (match_dup 2)
+Index: b/src/gcc/config/arm/t-aprofile
+===================================================================
+--- a/src/gcc/config/arm/t-aprofile
++++ b/src/gcc/config/arm/t-aprofile
+@@ -24,30 +24,13 @@
+ # have their default values during the configure step.  We enforce
+ # this during the top-level configury.
+ 
+-MULTILIB_OPTIONS     =
+-MULTILIB_DIRNAMES    =
+-MULTILIB_EXCEPTIONS  =
+-MULTILIB_MATCHES     =
+-MULTILIB_REUSE	     =
+-
+-# We have the following hierachy:
+-#   ISA: A32 (.) or T32 (thumb)
+-#   Architecture: ARMv7-A (v7-a), ARMv7VE (v7ve), or ARMv8-A (v8-a).
+-#   FPU: VFPv3-D16 (fpv3), NEONv1 (simdv1), VFPv4-D16 (fpv4),
+-#        NEON-VFPV4 (simdvfpv4), NEON for ARMv8 (simdv8), or None (.).
+-#   Float-abi: Soft (.), softfp (softfp), or hard (hardfp).
+-
+-MULTILIB_OPTIONS       += mthumb
+-MULTILIB_DIRNAMES      += thumb
++# Arch and FPU variants to build libraries with
+ 
+-MULTILIB_OPTIONS       += march=armv7-a/march=armv7ve/march=armv8-a
+-MULTILIB_DIRNAMES      += v7-a v7ve v8-a
++MULTI_ARCH_OPTS_A       = march=armv7-a/march=armv7ve/march=armv8-a
++MULTI_ARCH_DIRS_A       = v7-a v7ve v8-a
+ 
+-MULTILIB_OPTIONS       += mfpu=vfpv3-d16/mfpu=neon/mfpu=vfpv4-d16/mfpu=neon-vfpv4/mfpu=neon-fp-armv8
+-MULTILIB_DIRNAMES      += fpv3 simdv1 fpv4 simdvfpv4 simdv8
+-
+-MULTILIB_OPTIONS       += mfloat-abi=softfp/mfloat-abi=hard
+-MULTILIB_DIRNAMES      += softfp hard
++MULTI_FPU_OPTS_A        = mfpu=vfpv3-d16/mfpu=neon/mfpu=vfpv4-d16/mfpu=neon-vfpv4/mfpu=neon-fp-armv8
++MULTI_FPU_DIRS_A        = fpv3 simdv1 fpv4 simdvfpv4 simdv8
+ 
+ 
+ # Option combinations to build library with
+@@ -71,7 +54,11 @@ MULTILIB_REQUIRED      += *march=armv8-a
+ MULTILIB_REQUIRED      += *march=armv8-a/mfpu=neon-fp-armv8/mfloat-abi=*
+ 
+ 
++# Matches
++
+ # CPU Matches
++MULTILIB_MATCHES       += march?armv7-a=mcpu?marvell-pj4
++MULTILIB_MATCHES       += march?armv7-a=mcpu?generic-armv7-a
+ MULTILIB_MATCHES       += march?armv7-a=mcpu?cortex-a8
+ MULTILIB_MATCHES       += march?armv7-a=mcpu?cortex-a9
+ MULTILIB_MATCHES       += march?armv7-a=mcpu?cortex-a5
+Index: b/src/gcc/config/arm/t-multilib
+===================================================================
+--- /dev/null
++++ b/src/gcc/config/arm/t-multilib
+@@ -0,0 +1,69 @@
++# Copyright (C) 2016 Free Software Foundation, Inc.
++#
++# This file is part of GCC.
++#
++# GCC is free software; you can redistribute it and/or modify
++# it under the terms of the GNU General Public License as published by
++# the Free Software Foundation; either version 3, or (at your option)
++# any later version.
++#
++# GCC is distributed in the hope that it will be useful,
++# but WITHOUT ANY WARRANTY; without even the implied warranty of
++# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++# GNU General Public License for more details.
++#
++# You should have received a copy of the GNU General Public License
++# along with GCC; see the file COPYING3.  If not see
++# <http://www.gnu.org/licenses/>.
++
++# This is a target makefile fragment that attempts to get
++# multilibs built for the range of CPU's, FPU's and ABI's that
++# are relevant for the ARM architecture.  It should not be used in
++# conjunction with another make file fragment and assumes --with-arch,
++# --with-cpu, --with-fpu, --with-float, --with-mode have their default
++# values during the configure step.  We enforce this during the
++# top-level configury.
++
++MULTILIB_OPTIONS     =
++MULTILIB_DIRNAMES    =
++MULTILIB_EXCEPTIONS  =
++MULTILIB_MATCHES     =
++MULTILIB_REUSE	     =
++
++comma := ,
++tm_multilib_list := $(subst $(comma), ,$(TM_MULTILIB_CONFIG))
++
++HAS_APROFILE := $(filter aprofile,$(tm_multilib_list))
++HAS_RMPROFILE := $(filter rmprofile,$(tm_multilib_list))
++
++ifneq (,$(HAS_APROFILE))
++include $(srcdir)/config/arm/t-aprofile
++endif
++ifneq (,$(HAS_RMPROFILE))
++include $(srcdir)/config/arm/t-rmprofile
++endif
++SEP := $(and $(HAS_APROFILE),$(HAS_RMPROFILE),/)
++
++
++# We have the following hierachy:
++#   ISA: A32 (.) or T16/T32 (thumb)
++#   Architecture: ARMv6-M (v6-m), ARMv7-M (v7-m), ARMv7E-M (v7e-m),
++#                 ARMv7 (v7-ar), ARMv7-A (v7-a), ARMv7VE (v7ve),
++#                 ARMv8-M Baseline (v8-m.base), ARMv8-M Mainline (v8-m.main)
++#                 or ARMv8-A (v8-a).
++#   FPU: VFPv3-D16 (fpv3), NEONv1 (simdv1), FPV4-SP-D16 (fpv4-sp),
++#        VFPv4-D16 (fpv4), NEON-VFPV4 (simdvfpv4), FPV5-SP-D16 (fpv5-sp),
++#        VFPv5-D16 (fpv5), NEON for ARMv8 (simdv8), or None (.).
++#   Float-abi: Soft (.), softfp (softfp), or hard (hard).
++
++MULTILIB_OPTIONS       += mthumb
++MULTILIB_DIRNAMES      += thumb
++
++MULTILIB_OPTIONS       += $(MULTI_ARCH_OPTS_A)$(SEP)$(MULTI_ARCH_OPTS_RM)
++MULTILIB_DIRNAMES      += $(MULTI_ARCH_DIRS_A) $(MULTI_ARCH_DIRS_RM)
++
++MULTILIB_OPTIONS       += $(MULTI_FPU_OPTS_A)$(SEP)$(MULTI_FPU_OPTS_RM)
++MULTILIB_DIRNAMES      += $(MULTI_FPU_DIRS_A) $(MULTI_FPU_DIRS_RM)
++
++MULTILIB_OPTIONS       += mfloat-abi=softfp/mfloat-abi=hard
++MULTILIB_DIRNAMES      += softfp hard
+Index: b/src/gcc/config/arm/t-rmprofile
+===================================================================
+--- a/src/gcc/config/arm/t-rmprofile
++++ b/src/gcc/config/arm/t-rmprofile
+@@ -24,33 +24,14 @@
+ # values during the configure step.  We enforce this during the
+ # top-level configury.
+ 
+-MULTILIB_OPTIONS     =
+-MULTILIB_DIRNAMES    =
+-MULTILIB_EXCEPTIONS  =
+-MULTILIB_MATCHES     =
+-MULTILIB_REUSE       =
+-
+-# We have the following hierachy:
+-#   ISA: A32 (.) or T16/T32 (thumb).
+-#   Architecture: ARMv6S-M (v6-m), ARMv7-M (v7-m), ARMv7E-M (v7e-m),
+-#                 ARMv8-M Baseline (v8-m.base) or ARMv8-M Mainline (v8-m.main).
+-#   FPU: VFPv3-D16 (fpv3), FPV4-SP-D16 (fpv4-sp), FPV5-SP-D16 (fpv5-sp),
+-#        VFPv5-D16 (fpv5), or None (.).
+-#   Float-abi: Soft (.), softfp (softfp), or hard (hardfp).
+-
+-# Options to build libraries with
+-
+-MULTILIB_OPTIONS       += mthumb
+-MULTILIB_DIRNAMES      += thumb
+ 
+-MULTILIB_OPTIONS       += march=armv6s-m/march=armv7-m/march=armv7e-m/march=armv7/march=armv8-m.base/march=armv8-m.main
+-MULTILIB_DIRNAMES      += v6-m v7-m v7e-m v7-ar v8-m.base v8-m.main
++# Arch and FPU variants to build libraries with
+ 
+-MULTILIB_OPTIONS       += mfpu=vfpv3-d16/mfpu=fpv4-sp-d16/mfpu=fpv5-sp-d16/mfpu=fpv5-d16
+-MULTILIB_DIRNAMES      += fpv3 fpv4-sp fpv5-sp fpv5
++MULTI_ARCH_OPTS_RM      = march=armv6s-m/march=armv7-m/march=armv7e-m/march=armv7/march=armv8-m.base/march=armv8-m.main
++MULTI_ARCH_DIRS_RM      = v6-m v7-m v7e-m v7-ar v8-m.base v8-m.main
+ 
+-MULTILIB_OPTIONS       += mfloat-abi=softfp/mfloat-abi=hard
+-MULTILIB_DIRNAMES      += softfp hard
++MULTI_FPU_OPTS_RM       = mfpu=vfpv3-d16/mfpu=fpv4-sp-d16/mfpu=fpv5-sp-d16/mfpu=fpv5-d16
++MULTI_FPU_DIRS_RM       = fpv3 fpv4-sp fpv5-sp fpv5
+ 
+ 
+ # Option combinations to build library with
+Index: b/src/gcc/configure
+===================================================================
+--- a/src/gcc/configure
++++ b/src/gcc/configure
+@@ -1717,7 +1717,8 @@ Optional Packages:
+   --with-stabs            arrange to use stabs instead of host debug format
+   --with-dwarf2           force the default debug format to be DWARF 2
+   --with-specs=SPECS      add SPECS to driver command-line processing
+-  --with-pkgversion=PKG   Use PKG in the version string in place of "GCC"
++  --with-pkgversion=PKG   Use PKG in the version string in place of "Linaro
++                          GCC `cat $srcdir/LINARO-VERSION`"
+   --with-bugurl=URL       Direct users to URL to report a bug
+   --with-multilib-list    select multilibs (AArch64, SH and x86-64 only)
+   --with-gnu-ld           assume the C compiler uses GNU ld default=no
+@@ -7637,7 +7638,7 @@ if test "${with_pkgversion+set}" = set;
+       *)   PKGVERSION="($withval) " ;;
+      esac
+ else
+-  PKGVERSION="(GCC) "
++  PKGVERSION="(Linaro GCC `cat $srcdir/LINARO-VERSION`) "
+ 
+ fi
+ 
+@@ -18433,7 +18434,7 @@ else
+   lt_dlunknown=0; lt_dlno_uscore=1; lt_dlneed_uscore=2
+   lt_status=$lt_dlunknown
+   cat > conftest.$ac_ext <<_LT_EOF
+-#line 18436 "configure"
++#line 18437 "configure"
+ #include "confdefs.h"
+ 
+ #if HAVE_DLFCN_H
+@@ -18539,7 +18540,7 @@ else
+   lt_dlunknown=0; lt_dlno_uscore=1; lt_dlneed_uscore=2
+   lt_status=$lt_dlunknown
+   cat > conftest.$ac_ext <<_LT_EOF
+-#line 18542 "configure"
++#line 18543 "configure"
+ #include "confdefs.h"
+ 
+ #if HAVE_DLFCN_H
+Index: b/src/gcc/cppbuiltin.c
+===================================================================
+--- a/src/gcc/cppbuiltin.c
++++ b/src/gcc/cppbuiltin.c
+@@ -53,18 +53,41 @@ parse_basever (int *major, int *minor, i
+     *patchlevel = s_patchlevel;
+ }
+ 
++/* Parse a LINAROVER version string of the format "M.m-year.month[-spin][~dev]"
++   to create Linaro release number YYYYMM and spin version.  */
++static void
++parse_linarover (int *release, int *spin)
++{
++  static int s_year = -1, s_month, s_spin;
++
++  if (s_year == -1)
++    if (sscanf (LINAROVER, "%*[^-]-%d.%d-%d", &s_year, &s_month, &s_spin) != 3)
++      {
++	sscanf (LINAROVER, "%*[^-]-%d.%d", &s_year, &s_month);
++	s_spin = 0;
++      }
++
++  if (release)
++    *release = s_year * 100 + s_month;
++
++  if (spin)
++    *spin = s_spin;
++}
+ 
+ /* Define __GNUC__, __GNUC_MINOR__, __GNUC_PATCHLEVEL__ and __VERSION__.  */
+ static void
+ define__GNUC__ (cpp_reader *pfile)
+ {
+-  int major, minor, patchlevel;
++  int major, minor, patchlevel, linaro_release, linaro_spin;
+ 
+   parse_basever (&major, &minor, &patchlevel);
++  parse_linarover (&linaro_release, &linaro_spin);
+   cpp_define_formatted (pfile, "__GNUC__=%d", major);
+   cpp_define_formatted (pfile, "__GNUC_MINOR__=%d", minor);
+   cpp_define_formatted (pfile, "__GNUC_PATCHLEVEL__=%d", patchlevel);
+   cpp_define_formatted (pfile, "__VERSION__=\"%s\"", version_string);
++  cpp_define_formatted (pfile, "__LINARO_RELEASE__=%d", linaro_release);
++  cpp_define_formatted (pfile, "__LINARO_SPIN__=%d", linaro_spin);
+   cpp_define_formatted (pfile, "__ATOMIC_RELAXED=%d", MEMMODEL_RELAXED);
+   cpp_define_formatted (pfile, "__ATOMIC_SEQ_CST=%d", MEMMODEL_SEQ_CST);
+   cpp_define_formatted (pfile, "__ATOMIC_ACQUIRE=%d", MEMMODEL_ACQUIRE);
+Index: b/src/gcc/simplify-rtx.c
+===================================================================
+--- a/src/gcc/simplify-rtx.c
++++ b/src/gcc/simplify-rtx.c
+@@ -3345,19 +3345,21 @@ simplify_binary_operation_1 (enum rtx_co
+ 	  && UINTVAL (trueop0) == GET_MODE_MASK (mode)
+ 	  && ! side_effects_p (op1))
+ 	return op0;
++
++    canonicalize_shift:
+       /* Given:
+ 	 scalar modes M1, M2
+ 	 scalar constants c1, c2
+ 	 size (M2) > size (M1)
+ 	 c1 == size (M2) - size (M1)
+ 	 optimize:
+-	 (ashiftrt:M1 (subreg:M1 (lshiftrt:M2 (reg:M2) (const_int <c1>))
++	 ([a|l]shiftrt:M1 (subreg:M1 (lshiftrt:M2 (reg:M2) (const_int <c1>))
+ 				 <low_part>)
+ 		      (const_int <c2>))
+ 	 to:
+-	 (subreg:M1 (ashiftrt:M2 (reg:M2) (const_int <c1 + c2>))
++	 (subreg:M1 ([a|l]shiftrt:M2 (reg:M2) (const_int <c1 + c2>))
+ 		    <low_part>).  */
+-      if (code == ASHIFTRT
++      if ((code == ASHIFTRT || code == LSHIFTRT)
+ 	  && !VECTOR_MODE_P (mode)
+ 	  && SUBREG_P (op0)
+ 	  && CONST_INT_P (op1)
+@@ -3374,13 +3376,13 @@ simplify_binary_operation_1 (enum rtx_co
+ 	  rtx tmp = GEN_INT (INTVAL (XEXP (SUBREG_REG (op0), 1))
+ 			     + INTVAL (op1));
+ 	  machine_mode inner_mode = GET_MODE (SUBREG_REG (op0));
+-	  tmp = simplify_gen_binary (ASHIFTRT,
++	  tmp = simplify_gen_binary (code,
+ 				     GET_MODE (SUBREG_REG (op0)),
+ 				     XEXP (SUBREG_REG (op0), 0),
+ 				     tmp);
+ 	  return lowpart_subreg (mode, tmp, inner_mode);
+ 	}
+-    canonicalize_shift:
++
+       if (SHIFT_COUNT_TRUNCATED && CONST_INT_P (op1))
+ 	{
+ 	  val = INTVAL (op1) & (GET_MODE_PRECISION (mode) - 1);
+Index: b/src/gcc/testsuite/gcc.c-torture/execute/pr78622.c
+===================================================================
+--- a/src/gcc/testsuite/gcc.c-torture/execute/pr78622.c
++++ b/src/gcc/testsuite/gcc.c-torture/execute/pr78622.c
+@@ -1,6 +1,7 @@
+ /* PR middle-end/78622 - [7 Regression] -Wformat-overflow/-fprintf-return-value
+    incorrect with overflow/wrapping
+    { dg-skip-if "Requires %hhd format" { hppa*-*-hpux* } { "*" } { "" } }
++   { dg-require-effective-target c99_runtime }
+    { dg-additional-options "-Wformat-overflow=2" } */
+ 
+ __attribute__((noinline, noclone)) int
+Index: b/src/gcc/testsuite/gcc.dg/lsr-div1.c
+===================================================================
+--- /dev/null
++++ b/src/gcc/testsuite/gcc.dg/lsr-div1.c
+@@ -0,0 +1,57 @@
++/* Test division by const int generates only one shift.  */
++/* { dg-do run } */
++/* { dg-options "-O2 -fdump-rtl-combine-all" } */
++/* { dg-options "-O2 -fdump-rtl-combine-all -mtune=cortex-a53" { target aarch64*-*-* } } */
++/* { dg-require-effective-target int32plus } */
++
++extern void abort (void);
++
++#define NOINLINE __attribute__((noinline))
++
++static NOINLINE int
++f1 (unsigned int n)
++{
++  return n % 0x33;
++}
++
++static NOINLINE int
++f2 (unsigned int n)
++{
++  return n % 0x12;
++}
++
++int
++main ()
++{
++  int a = 0xaaaaaaaa;
++  int b = 0x55555555;
++  int c;
++  c = f1 (a);
++  if (c != 0x11)
++    abort ();
++  c = f1 (b);
++  if (c != 0x22)
++    abort ();
++  c = f2 (a);
++  if (c != 0xE)
++    abort ();
++  c = f2 (b);
++  if (c != 0x7)
++    abort ();
++  return 0;
++}
++
++/* Following replacement pattern of intger division by constant, GCC is expected
++   to generate UMULL and (x)SHIFTRT.  This test checks that considering division
++   by const 0x33, gcc generates a single LSHIFTRT by 37, instead of
++   two - LSHIFTRT by 32 and LSHIFTRT by 5.  */
++
++/* { dg-final { scan-rtl-dump "\\(set \\(subreg:DI \\(reg:SI" "combine" { target aarch64*-*-* } } } */
++/* { dg-final { scan-rtl-dump "\\(lshiftrt:DI \\(reg:DI" "combine" { target aarch64*-*-* } } } */
++/* { dg-final { scan-rtl-dump "\\(const_int 37 " "combine" { target aarch64*-*-* } } } */
++
++/* Similarly, considering division by const 0x12, gcc generates a
++   single LSHIFTRT by 34, instead of two - LSHIFTRT by 32 and LSHIFTRT by 2.  */
++
++/* { dg-final { scan-rtl-dump "\\(const_int 34 " "combine" { target aarch64*-*-* } } } */
++
+Index: b/src/gcc/testsuite/gcc.target/arm/fpscr.c
+===================================================================
+--- /dev/null
++++ b/src/gcc/testsuite/gcc.target/arm/fpscr.c
+@@ -0,0 +1,16 @@
++/* Test the fpscr builtins.  */
++
++/* { dg-do compile } */
++/* { dg-require-effective-target arm_fp_ok } */
++/* { dg-skip-if "need fp instructions" { *-*-* } { "-mfloat-abi=soft" } { "" } } */
++/* { dg-add-options arm_fp } */
++
++void
++test_fpscr ()
++{
++  volatile unsigned int status = __builtin_arm_get_fpscr ();
++  __builtin_arm_set_fpscr (status);
++}
++
++/* { dg-final { scan-assembler "mrc\tp10, 7, r\[0-9\]+, cr1, cr0, 0" } } */
++/* { dg-final { scan-assembler "mcr\tp10, 7, r\[0-9\]+, cr1, cr0, 0" } } */
