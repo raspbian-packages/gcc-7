@@ -1,0 +1,22 @@
+Description: Ignore warnings when checking whether CC understands Ada.
+ Simplify Ada driver check (we always build using the required
+ Ada version. Needed for warnings on alpha.
+ .
+ Full history:
+ https://anonscm.debian.org/viewvc/gcccvs/branches/sid/gcc-6/debian/patches/ada-driver-check.diff
+ .
+ Attempt to check if this patch is obsolete:
+ https://lists.debian.org/debian-alpha/2017/06/threads.html
+Author: Matthias Klose <doko@debian.org>
+
+--- a/src/config/acx.m4
++++ b/src/config/acx.m4
+@@ -407,7 +407,7 @@
+ # Other compilers, like HP Tru64 UNIX cc, exit successfully when
+ # given a .adb file, but produce no object file.  So we must check
+ # if an object file was really produced to guard against this.
+-errors=`(${CC} $1[]m4_ifval([$1], [ ])-c conftest.adb) 2>&1 || echo failure`
++errors=`(${CC} $1[]m4_ifval([$1], [ ])-c conftest.adb) 2>/dev/null || echo failure`
+ if test x"$errors" = x && test -f conftest.$ac_objext; then
+   acx_cv_cc_gcc_supports_ada=yes
+ fi
