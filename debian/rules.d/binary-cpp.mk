@@ -15,8 +15,7 @@ dirs_cpp = \
 
 files_cpp = \
 	$(PF)/bin/$(cmd_prefix)cpp$(pkg_ver) \
-	$(gcc_lexec_dir)/cc1 \
-	$(gcc_lexec_dir)/liblto_plugin.so{,.0,.0.0.0}
+	$(gcc_lexec_dir)/cc1
 
 ifneq ($(GFDL_INVARIANT_FREE),yes)
   files_cpp += \

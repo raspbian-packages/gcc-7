@@ -66,6 +66,7 @@ define __do_libobjc
 	debian/dh_doclink -p$(p_d) $(p_lbase)
 
 	dh_strip -p$(p_l) --dbg-package=$(p_d)
+	rm -f debian/$(p_l).symbols
 	$(if $(2),
 	  ln -sf libobjc.symbols debian/$(p_l).symbols ,
 	  fgrep -v libobjc.symbols.gc debian/libobjc.symbols > debian/$(p_l).symbols
@@ -96,10 +97,11 @@ define __do_libobjc_dev
 
 	$(call install_gcc_lib,libobjc,$(OBJC_SONAME),$(2),$(p_l))
 	$(if $(filter yes,$(with_objc_gc)),
+	  $(if $(2),,
 		dh_link -p$(p_l) \
 		  /$(usr_lib$(2))/libobjc_gc.so.$(OBJC_SONAME) \
 		  /$(gcc_lib_dir$(2))/libobjc_gc.so
-	)
+	))
 
 	debian/dh_doclink -p$(p_l) $(p_lbase)
 	echo $(p_l) >> debian/$(lib_binaries)

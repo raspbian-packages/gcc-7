@@ -18,14 +18,6 @@ Index: b/src/libgo/Makefile.am
  	  $(SHELL) $(srcdir)/testsuite/gotest --goarch=$(GOARCH) --goos=$(GOOS) --dejagnu=yes --basedir=$(srcdir) --srcdir=$(srcdir)/go/$(@D) --pkgpath="$(@D)" --pkgfiles="$$files" --testname="$(@D)" $(GOTESTFLAGS); \
  	elif test "$(GOBENCH)" != ""; then \
  	  $(SHELL) $(srcdir)/testsuite/gotest --goarch=$(GOARCH) --goos=$(GOOS) --basedir=$(srcdir) --srcdir=$(srcdir)/go/$(@D) --pkgpath="$(@D)" --pkgfiles="$$files" --bench="$(GOBENCH)" $(GOTESTFLAGS); \
-@@ -963,6 +968,7 @@ CHECK = \
- 	    echo "FAIL: $(@D)" > $@-testsum; \
- 	    exit 1; \
- 	  fi; \
-+	fi; \
- 	fi
- 
- # Build all packages before checking any.
 Index: b/src/libgo/Makefile.in
 ===================================================================
 --- a/src/libgo/Makefile.in
@@ -44,11 +36,3 @@ Index: b/src/libgo/Makefile.in
  	  $(SHELL) $(srcdir)/testsuite/gotest --goarch=$(GOARCH) --goos=$(GOOS) --dejagnu=yes --basedir=$(srcdir) --srcdir=$(srcdir)/go/$(@D) --pkgpath="$(@D)" --pkgfiles="$$files" --testname="$(@D)" $(GOTESTFLAGS); \
  	elif test "$(GOBENCH)" != ""; then \
  	  $(SHELL) $(srcdir)/testsuite/gotest --goarch=$(GOARCH) --goos=$(GOOS) --basedir=$(srcdir) --srcdir=$(srcdir)/go/$(@D) --pkgpath="$(@D)" --pkgfiles="$$files" --bench="$(GOBENCH)" $(GOTESTFLAGS); \
-@@ -1119,6 +1124,7 @@ CHECK = \
- 	    echo "FAIL: $(@D)" > $@-testsum; \
- 	    exit 1; \
- 	  fi; \
-+	fi; \
- 	fi
- 
- 

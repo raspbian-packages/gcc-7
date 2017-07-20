@@ -647,7 +647,6 @@ ada_no_cross	:= no
 ada_no_snap	:= no
 ifeq ($(single_package),yes)
   ifneq (,$(filter $(DEB_TARGET_ARCH),powerpcspe))
-    #ada_no_cpus += kfreebsd-i386 kfreebsd-amd64
     ada_no_snap := yes
   endif
 endif
@@ -659,14 +658,6 @@ ifeq ($(with_dev),yes)
 endif
 ifneq (,$(filter $(DEB_TARGET_ARCH_CPU),$(ada_no_cpus)))
   with_ada := disabled for cpu $(DEB_TARGET_ARCH_CPU)
-endif
-ifneq (,$(filter $(DEB_TARGET_ARCH),kfreebsd-i386 kfreebsd-amd64 hurd-i386))
-  with_ada := disabled for architecture $(DEB_TARGET_ARCH)
-endif
-ifeq (,$(findstring cross,$(build_type)))
-  ifneq (,$(filter $(DEB_TARGET_ARCH),armel))
-    with_ada := native gnat disabled for architecture $(DEB_TARGET_ARCH)
-  endif
 endif
 ifneq (,$(findstring $(DEB_TARGET_GNU_SYSTEM),$(ada_no_systems)))
   with_ada := disabled for system $(DEB_TARGET_GNU_SYSTEM)
@@ -1171,6 +1162,9 @@ ifeq ($(distribution),Debian)
   ifeq (,$(filter $(distrelease),wheezy squeeze jessie))
     pie_archs = amd64 arm64 armel armhf i386 mips mipsel mips64el \
 		ppc64el s390x sparc sparc64 kfreebsd-amd64 kfreebsd-i386
+  endif
+  ifeq (,$(filter $(distrelease),wheezy squeeze jessie stretch))
+    pie_archs += ppc64
   endif
 else ifeq ($(distribution),Ubuntu)
   ifeq (,$(filter $(distrelease),lucid precise trusty utopic vivid wily))

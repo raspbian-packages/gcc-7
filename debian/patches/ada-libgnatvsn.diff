@@ -45,8 +45,19 @@
 +
 +} | tee -a config.log
 --- /dev/null
++++ b/src/libgnatvsn/gnatvsn.gpr.sed
+@@ -0,0 +1,8 @@
++library project Gnatvsn is
++   for Library_Name use "gnatvsn";
++   for Library_Kind use "dynamic";
++   for Library_Dir use "lib_inst_dir";
++   for Source_Dirs use ("src_inst_dir");
++   for Library_ALI_Dir use "ali_inst_dir";
++   for Externally_Built use "true";
++end Gnatvsn;
+--- /dev/null
 +++ b/src/libgnatvsn/Makefile.in
-@@ -0,0 +1,150 @@
+@@ -0,0 +1,161 @@
 +# Makefile for libgnatvsn.
 +#   Copyright (c) 2006 Ludovic Brenta <ludovic@ludovic-brenta.org>
 +#   Copyright (c) 2017 Nicolas Boulenguez <nicolas@debian.org>
@@ -91,9 +102,10 @@
 +
 +LIB_VERSION := $(shell expr '$(BASEVER)' : '\([0-9]\+\)')
 +
-+src_inst_dir := $(DESTDIR)$(prefix)/share/ada/adainclude/gnatvsn
-+ali_inst_dir := $(DESTDIR)$(prefix)/lib/ada/adalib/gnatvsn
-+lib_inst_dir := $(DESTDIR)$(libdir)
++src_inst_dir := $(prefix)/share/ada/adainclude/gnatvsn
++gpr_inst_dir := $(prefix)/share/gpr
++ali_inst_dir := $(libdir)/ada/adalib/gnatvsn
++lib_inst_dir := $(libdir)
 +
 +# Initial value of variables accumulationg build flags.
 +adaflags := -gnatn
@@ -143,7 +155,7 @@
 +           $(addsuffix .adb, $(UNITS_BOTH) $(SEPARATES))
 +OBJECTS := $(addsuffix .o, $(UNITS_BOTH) snames $(UNITS_SPEC) version)
 +
-+all: libgnatvsn.a libgnatvsn.so.$(LIB_VERSION)
++all: libgnatvsn.a libgnatvsn.so.$(LIB_VERSION) gnatvsn.gpr
 +
 +libgnatvsn.so.$(LIB_VERSION): $(addprefix obj-shared/,$(OBJECTS))
 +	$(CC) -o $@ -shared -fPIC -Wl,--soname,$@ $^ $(ldflags) $(ldlibs)
@@ -188,15 +200,25 @@
 +snames.adb snames.ads:
 +	ln -s ../../gcc/ada/$@
 +
++gnatvsn.gpr: $(srcdir)/gnatvsn.gpr.sed
++	sed '$(foreach v,src ali lib,s|$(v)_inst_dir|$($(v)_inst_dir)|;)' \
++	  $< > $@
++
 +install: all
-+	mkdir -p $(lib_inst_dir) $(src_inst_dir) $(ali_inst_dir)
-+	$(INSTALL_DATA) libgnatvsn.a libgnatvsn.so.* $(lib_inst_dir)
-+	cd $(lib_inst_dir) && ln -sf libgnatvsn.so.$(LIB_VERSION) libgnatvsn.so
-+	$(INSTALL_DATA) *.adb *.ads *.c *.h $(src_inst_dir)
-+	$(INSTALL) -m 0444 *.ali $(ali_inst_dir)
++	mkdir -p $(DESTDIR)$(gpr_inst_dir)
++	$(INSTALL_DATA) gnatvsn.gpr $(DESTDIR)$(gpr_inst_dir)
++	mkdir -p $(DESTDIR)$(lib_inst_dir)
++	$(INSTALL_DATA) libgnatvsn.a libgnatvsn.so.* $(DESTDIR)$(lib_inst_dir)
++	cd $(DESTDIR)$(lib_inst_dir) && ln -sf libgnatvsn.so.$(LIB_VERSION) libgnatvsn.so
++	mkdir -p $(DESTDIR)$(src_inst_dir)
++	$(INSTALL_DATA) *.adb *.ads *.c *.h $(DESTDIR)$(src_inst_dir)
++	mkdir -p $(DESTDIR)$(ali_inst_dir)
++	$(INSTALL) -m 0444 *.ali $(DESTDIR)$(ali_inst_dir)
 +
 +clean:
-+	rm -rf *.ali obj-static obj-shared libgnatvsn* *.adb *.ads *.c *.h
++	rm -fr obj-static obj-shared
++	rm -f *.ali libgnatvsn* *.adb *.ads *.c *.h gnatvsn.gpr
++	rm -f Makefile config.log
 --- a/src/Makefile.def
 +++ b/src/Makefile.def
 @@ -187,6 +187,16 @@

@@ -47,6 +47,9 @@ ifeq ($(with_libcc1_plugin),yes)
 	$(gcc_lib_dir)/plugin/libc[cp]1plugin.so{,.0,.0.0.0}
 endif
 
+files_gcc += \
+	$(gcc_lexec_dir)/liblto_plugin.so{,.0,.0.0.0}
+
 ifeq ($(DEB_STAGE),stage1)
     files_gcc += \
 	$(gcc_lib_dir)/include \

@@ -2045,10 +2045,13 @@ endif
 	  done
 
 ifneq ($(configured_libdir),$(libdir))
-	for i in debug go pkgconfig '*.so' '*.so.*' '*.a' '*.la' '*.py' '*.spec'; do \
+	for i in ada debug go pkgconfig '*.so' '*.so.*' '*.a' '*.la' '*.py' '*.spec'; do \
 	  mv $(d)/$(PF)/$(configured_libdir)/$$i \
 		$(d)/$(PF)/$(libdir)/. || true; \
 	done
+  ifeq ($(with_ada),yes)
+	sed -i s~$(PF)/$(configured_libdir)~$(PF)/$(libdir)~ $(d)/$(PF)/share/gpr/gnatvsn.gpr
+  endif
 endif
 
 	-ls -l $(d)/usr
@@ -2127,10 +2130,13 @@ ifeq ($(DEB_STAGE)-$(DEB_CROSS),rtlibs-yes)
 	done
 else
   ifneq ($(configured_libdir),$(libdir))
-	for i in debug go pkgconfig '*.so' '*.so.*' '*.a' '*.la' '*.o' '*.py' '*.spec'; do \
+	for i in ada debug go pkgconfig '*.so' '*.so.*' '*.a' '*.la' '*.o' '*.py' '*.spec'; do \
 	  mv $(d)/$(PF)/$(configured_libdir)/$$i \
 		$(d)/$(PF)/$(libdir)/. || true; \
 	done
+    ifeq ($(with_ada),yes)
+	sed -i s~$(PF)/$(configured_libdir)~$(PF)/$(libdir)~ $(d)/$(PF)/share/gpr/gnatvsn.gpr
+    endif
   endif
 endif
 

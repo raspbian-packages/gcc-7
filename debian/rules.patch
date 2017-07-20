@@ -14,6 +14,7 @@ series_file	?= $(patchdir)/series
 
 debian_patches = \
 	svn-updates \
+	$(if $(with_linaro_branch),gcc-linaro-revert-r249596) \
 	$(if $(with_linaro_branch),gcc-linaro) \
 	$(if $(with_linaro_branch),gcc-linaro-no-macros) \
 
@@ -119,7 +120,6 @@ debian_patches += ada-arm
 #ifeq ($(with_ada),yes)
 
   debian_patches += \
-	ada-driver-check \
 	ada-gcc-name \
 	ada-library-project-files-soname
 
@@ -146,6 +146,7 @@ debian_patches += ada-arm
 
   debian_patches += ada-link-shlib
   debian_patches += ada-lib-info-source-date-epoch
+  debian_patches += ada-armel-libatomic
 #endif
 
 

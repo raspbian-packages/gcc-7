@@ -139,16 +139,13 @@ endif
 $(binary_stamp)-libgnatvsn: $(install_stamp)
 	: # $(p_lgnatvsn_dev)
 ifneq (,$(filter $(build_type), build-native cross-build-native))
-	$(dh_compat2) dh_movefiles -p$(p_lgnatvsn_dev) usr/lib/ada/adalib/gnatvsn
+	dh_install -p$(p_lgnatvsn_dev) $(usr_lib)/ada/adalib/gnatvsn
 	$(dh_compat2) dh_movefiles -p$(p_lgnatvsn_dev) usr/share/ada/adainclude/gnatvsn
-	dh_install -p$(p_lgnatvsn_dev) \
-	   debian/gnatvsn.gpr usr/share/gpr
+	dh_install -p$(p_lgnatvsn_dev) usr/share/gpr/gnatvsn.gpr
 else
 	mkdir -p $(d_lgnatvsn_dev)/$(gcc_lib_dir)/{adalib,adainclude}/gnatvsn
 	mv $(d)/usr/lib/ada/adalib/gnatvsn $(d_lgnatvsn_dev)/$(gcc_lib_dir)/adalib/.
 	mv $(d)/usr/share/ada/adainclude/gnatvsn $(d_lgnatvsn_dev)/$(gcc_lib_dir)/adainclude/.
-	dh_install -p$(p_lgnatvsn_dev) \
-	   debian/gnatvsn.gpr $(gcc_lib_dir)/adainclude
 endif
 	$(dh_compat2) dh_movefiles -p$(p_lgnatvsn_dev) $(usr_lib)/libgnatvsn.a
 	dh_link -p$(p_lgnatvsn_dev) \
@@ -234,11 +231,6 @@ endif
 	    *) ln -sf $(cmd_prefix)gnat$(pkg_ver).1 $(d_gnat)/$(PF)/share/man/man1/$(cmd_prefix)$$i$(pkg_ver).1; \
 	  esac; \
 	done
-
-ifneq (,$(filter $(build_type), build-native cross-build-native))
-	: # see #814977, work around it for now ...
-	ln -sf gcc$(pkg_ver) $(d_gnat)/$(PF)/bin/gcc$(pkg_ver)$(pkg_ver)
-endif
 
 ifneq (,$(filter $(build_type), build-native cross-build-native))
 	: # still ship the unversioned prefixed names in the gnat package.
