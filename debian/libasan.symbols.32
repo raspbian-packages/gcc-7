@@ -1,0 +1,14 @@
+ __interceptor_ptrace@Base 7
+ _ZdaPvj@Base 5
+ _ZdlPvj@Base 5
+ _ZdaPvjSt11align_val_t@Base 7
+ _ZdlPvjSt11align_val_t@Base 7
+ _Znaj@Base 4.8
+ _ZnajRKSt9nothrow_t@Base 4.8
+ _ZnajSt11align_val_t@Base 7
+ _ZnajSt11align_val_tRKSt9nothrow_t@Base 7
+ _Znwj@Base 4.8
+ _ZnwjRKSt9nothrow_t@Base 4.8
+ _ZnwjSt11align_val_t@Base 7
+ _ZnwjSt11align_val_tRKSt9nothrow_t@Base 7
+ ptrace@Base 7
