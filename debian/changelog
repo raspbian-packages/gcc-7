@@ -1,3 +1,7 @@
+gcc-7 (7.1.0-10+rpi1) buster-staging; urgency=medium
+
+ -- Raspbian forward porter <root@raspbian.org>  Sat, 29 Jul 2017 15:49:06 +0000
+
 gcc-7 (7.1.0-10) unstable; urgency=medium
 
   * Update to SVN 20170722 (r250453) from the gcc-7-branch.
