@@ -1,33 +1,19 @@
-# DP: Changes for the Linaro 7-2017.05 snapshot.
+# DP: Changes for the Linaro 7-2017.07 snapshot.
 
 MSG=$(git log origin/linaro/gcc-7-branch --format=format:"%s" -n 1 --grep "Merge branches"); SVN=${MSG##* }; git log origin/gcc-7-branch --format=format:"%H" -n 1 --grep "gcc-7-branch@${SVN%.}"
 
-LANG=C git diff --no-renames 4f4f68662706100e1fb1bb4e73ee50061d626f81 ffc354ab2f2465daf14068b1ad2c7afec87a1c9e \
+LANG=C git diff --no-renames d4064d4a3d1f9160d187e105d218c105b541f3c7 d19e70aba57b1bcc5093f3b62f853ff83e976c2e \
  | egrep -v '^(diff|index) ' \
  | filterdiff --strip=1 --addoldprefix=a/src/  --addnewprefix=b/src/ \
  | sed 's,a/src//dev/null,/dev/null,'
 
-Index: b/src/.gitreview
-===================================================================
---- /dev/null
-+++ b/src/.gitreview
-@@ -0,0 +1,5 @@
-+[gerrit]
-+host=review.linaro.org
-+port=29418
-+project=toolchain/gcc
-+defaultbranch=linaro-local/gcc-7-integration-branch
-Index: b/src/gcc/LINARO-VERSION
-===================================================================
 --- /dev/null
 +++ b/src/gcc/LINARO-VERSION
 @@ -0,0 +1 @@
-+7.1-2017.05~dev
-Index: b/src/gcc/Makefile.in
-===================================================================
++Snapshot 7.1-2017.07
 --- a/src/gcc/Makefile.in
 +++ b/src/gcc/Makefile.in
-@@ -845,10 +845,12 @@ BASEVER     := $(srcdir)/BASE-VER  # 4.x
+@@ -845,10 +845,12 @@ BASEVER     := $(srcdir)/BASE-VER  # 4.x.y
  DEVPHASE    := $(srcdir)/DEV-PHASE # experimental, prerelease, ""
  DATESTAMP   := $(srcdir)/DATESTAMP # YYYYMMDD or empty
  REVISION    := $(srcdir)/REVISION  # [BRANCH revision XXXXXX]
@@ -60,8 +46,6 @@ Index: b/src/gcc/Makefile.in
  
  CFLAGS-cppdefault.o += $(PREPROCESSOR_DEFINES)
  
-Index: b/src/gcc/config.gcc
-===================================================================
 --- a/src/gcc/config.gcc
 +++ b/src/gcc/config.gcc
 @@ -3791,34 +3791,19 @@ case "${target}" in
@@ -120,11 +104,112 @@ Index: b/src/gcc/config.gcc
  			fi
  		fi
  		;;
-Index: b/src/gcc/config/aarch64/aarch64.c
-===================================================================
+--- a/src/gcc/config/aarch64/aarch64-protos.h
++++ b/src/gcc/config/aarch64/aarch64-protos.h
+@@ -203,6 +203,16 @@ struct cpu_approx_modes
+   const unsigned int recip_sqrt;	/* Reciprocal square root.  */
+ };
+ 
++/* Cache prefetch settings for prefetch-loop-arrays.  */
++struct cpu_prefetch_tune
++{
++  const int num_slots;
++  const int l1_cache_size;
++  const int l1_cache_line_size;
++  const int l2_cache_size;
++  const int default_opt_level;
++};
++
+ struct tune_params
+ {
+   const struct cpu_cost_table *insn_extra_cost;
+@@ -224,9 +234,6 @@ struct tune_params
+   int min_div_recip_mul_df;
+   /* Value for aarch64_case_values_threshold; or 0 for the default.  */
+   unsigned int max_case_values;
+-  /* Value for PARAM_L1_CACHE_LINE_SIZE; or 0 to use the default.  */
+-  unsigned int cache_line_size;
+-
+ /* An enum specifying how to take into account CPU autoprefetch capabilities
+    during instruction scheduling:
+    - AUTOPREFETCHER_OFF: Do not take autoprefetch capabilities into account.
+@@ -244,6 +251,10 @@ struct tune_params
+   } autoprefetcher_model;
+ 
+   unsigned int extra_tuning_flags;
++
++  /* Place prefetch struct pointer at the end to enable type checking
++     errors when tune_params misses elements (e.g., from erroneous merges).  */
++  const struct cpu_prefetch_tune *prefetch;
+ };
+ 
+ #define AARCH64_FUSION_PAIR(x, name) \
+@@ -301,6 +312,7 @@ extern struct tune_params aarch64_tune_params;
+ 
+ HOST_WIDE_INT aarch64_initial_elimination_offset (unsigned, unsigned);
+ int aarch64_get_condition_code (rtx);
++bool aarch64_address_valid_for_prefetch_p (rtx, bool);
+ bool aarch64_bitmask_imm (HOST_WIDE_INT val, machine_mode);
+ unsigned HOST_WIDE_INT aarch64_and_split_imm1 (HOST_WIDE_INT val_in);
+ unsigned HOST_WIDE_INT aarch64_and_split_imm2 (HOST_WIDE_INT val_in);
+@@ -311,6 +323,7 @@ bool aarch64_const_vec_all_same_int_p (rtx, HOST_WIDE_INT);
+ bool aarch64_constant_address_p (rtx);
+ bool aarch64_emit_approx_div (rtx, rtx, rtx);
+ bool aarch64_emit_approx_sqrt (rtx, rtx, bool);
++void aarch64_expand_call (rtx, rtx, bool);
+ bool aarch64_expand_movmem (rtx *);
+ bool aarch64_float_const_zero_rtx_p (rtx);
+ bool aarch64_function_arg_regno_p (unsigned);
+--- a/src/gcc/config/aarch64/aarch64-simd.md
++++ b/src/gcc/config/aarch64/aarch64-simd.md
+@@ -153,6 +153,19 @@
+    (set_attr "length" "4,4,4,8,8,8,4")]
+ )
+ 
++;; When storing lane zero we can use the normal STR and its more permissive
++;; addressing modes.
++
++(define_insn "aarch64_store_lane0<mode>"
++  [(set (match_operand:<VEL> 0 "memory_operand" "=m")
++	(vec_select:<VEL> (match_operand:VALL_F16 1 "register_operand" "w")
++			(parallel [(match_operand 2 "const_int_operand" "n")])))]
++  "TARGET_SIMD
++   && ENDIAN_LANE_N (<MODE>mode, INTVAL (operands[2])) == 0"
++  "str\\t%<Vetype>1, %0"
++  [(set_attr "type" "neon_store1_1reg<q>")]
++)
++
+ (define_insn "load_pair<mode>"
+   [(set (match_operand:VD 0 "register_operand" "=w")
+ 	(match_operand:VD 1 "aarch64_mem_pair_operand" "Ump"))
+@@ -561,18 +574,18 @@
+ 	gcc_unreachable ();
+      }
+   }
+-  [(set_attr "type" "neon_from_gp<q>, neon_ins<q>, neon_load1_1reg<q>")]
++  [(set_attr "type" "neon_from_gp<q>, neon_ins<q>, neon_load1_one_lane<q>")]
+ )
+ 
+ (define_insn "*aarch64_simd_vec_copy_lane<mode>"
+-  [(set (match_operand:VALL 0 "register_operand" "=w")
+-	(vec_merge:VALL
+-	    (vec_duplicate:VALL
++  [(set (match_operand:VALL_F16 0 "register_operand" "=w")
++	(vec_merge:VALL_F16
++	    (vec_duplicate:VALL_F16
+ 	      (vec_select:<VEL>
+-		(match_operand:VALL 3 "register_operand" "w")
++		(match_operand:VALL_F16 3 "register_operand" "w")
+ 		(parallel
+ 		  [(match_operand:SI 4 "immediate_operand" "i")])))
+-	    (match_operand:VALL 1 "register_operand" "0")
++	    (match_operand:VALL_F16 1 "register_operand" "0")
+ 	    (match_operand:SI 2 "immediate_operand" "i")))]
+   "TARGET_SIMD"
+   {
 --- a/src/gcc/config/aarch64/aarch64.c
 +++ b/src/gcc/config/aarch64/aarch64.c
-@@ -193,10 +193,10 @@ static const struct aarch64_flag_desc aa
+@@ -193,10 +193,10 @@ static const struct aarch64_flag_desc aarch64_tuning_flags[] =
  static const struct cpu_addrcost_table generic_addrcost_table =
  {
      {
@@ -137,7 +222,51 @@ Index: b/src/gcc/config/aarch64/aarch64.c
      },
    0, /* pre_modify  */
    0, /* post_modify  */
-@@ -538,8 +538,8 @@ static const struct tune_params generic_
+@@ -526,6 +526,43 @@ static const cpu_approx_modes xgene1_approx_modes =
+   AARCH64_APPROX_ALL	/* recip_sqrt  */
+ };
+ 
++/* Generic prefetch settings (which disable prefetch).  */
++static const cpu_prefetch_tune generic_prefetch_tune =
++{
++  0,			/* num_slots  */
++  -1,			/* l1_cache_size  */
++  -1,			/* l1_cache_line_size  */
++  -1,			/* l2_cache_size  */
++  -1			/* default_opt_level  */
++};
++
++static const cpu_prefetch_tune exynosm1_prefetch_tune =
++{
++  0,			/* num_slots  */
++  -1,			/* l1_cache_size  */
++  64,			/* l1_cache_line_size  */
++  -1,			/* l2_cache_size  */
++  -1			/* default_opt_level  */
++};
++
++static const cpu_prefetch_tune qdf24xx_prefetch_tune =
++{
++  4,			/* num_slots  */
++  32,			/* l1_cache_size  */
++  64,			/* l1_cache_line_size  */
++  1024,			/* l2_cache_size  */
++  3			/* default_opt_level  */
++};
++
++static const cpu_prefetch_tune thunderx2t99_prefetch_tune =
++{
++  0,			/* num_slots  */
++  -1,			/* l1_cache_size  */
++  64,			/* l1_cache_line_size  */
++  -1,			/* l2_cache_size  */
++  -1			/* default_opt_level  */
++};
++
+ static const struct tune_params generic_tunings =
+ {
+   &cortexa57_extra_costs,
+@@ -538,17 +575,17 @@ static const struct tune_params generic_tunings =
    2, /* issue_rate  */
    (AARCH64_FUSE_AES_AESMC), /* fusible_ops  */
    8,	/* function_align.  */
@@ -148,37 +277,1224 @@ Index: b/src/gcc/config/aarch64/aarch64.c
    2,	/* int_reassoc_width.  */
    4,	/* fp_reassoc_width.  */
    1,	/* vec_reassoc_width.  */
-@@ -547,7 +547,7 @@ static const struct tune_params generic_
+   2,	/* min_div_recip_mul_sf.  */
    2,	/* min_div_recip_mul_df.  */
    0,	/* max_case_values.  */
-   0,	/* cache_line_size.  */
+-  0,	/* cache_line_size.  */
 -  tune_params::AUTOPREFETCHER_OFF,	/* autoprefetcher_model.  */
+-  (AARCH64_EXTRA_TUNE_NONE)	/* tune_flags.  */
 +  tune_params::AUTOPREFETCHER_WEAK,	/* autoprefetcher_model.  */
-   (AARCH64_EXTRA_TUNE_NONE)	/* tune_flags.  */
++  (AARCH64_EXTRA_TUNE_NONE),	/* tune_flags.  */
++  &generic_prefetch_tune
  };
  
-Index: b/src/gcc/config/arm/arm-builtins.c
-===================================================================
---- a/src/gcc/config/arm/arm-builtins.c
-+++ b/src/gcc/config/arm/arm-builtins.c
-@@ -1893,10 +1893,10 @@ arm_init_builtins (void)
- 	= build_function_type_list (unsigned_type_node, NULL);
+ static const struct tune_params cortexa35_tunings =
+@@ -564,7 +601,7 @@ static const struct tune_params cortexa35_tunings =
+   (AARCH64_FUSE_AES_AESMC | AARCH64_FUSE_MOV_MOVK | AARCH64_FUSE_ADRP_ADD
+    | AARCH64_FUSE_MOVK_MOVK | AARCH64_FUSE_ADRP_LDR), /* fusible_ops  */
+   16,	/* function_align.  */
+-  8,	/* jump_align.  */
++  4,	/* jump_align.  */
+   8,	/* loop_align.  */
+   2,	/* int_reassoc_width.  */
+   4,	/* fp_reassoc_width.  */
+@@ -572,9 +609,9 @@ static const struct tune_params cortexa35_tunings =
+   2,	/* min_div_recip_mul_sf.  */
+   2,	/* min_div_recip_mul_df.  */
+   0,	/* max_case_values.  */
+-  0,	/* cache_line_size.  */
+   tune_params::AUTOPREFETCHER_WEAK,	/* autoprefetcher_model.  */
+-  (AARCH64_EXTRA_TUNE_NONE)	/* tune_flags.  */
++  (AARCH64_EXTRA_TUNE_NONE),	/* tune_flags.  */
++  &generic_prefetch_tune
+ };
  
-       arm_builtin_decls[ARM_BUILTIN_GET_FPSCR]
--	= add_builtin_function ("__builtin_arm_ldfscr", ftype_get_fpscr,
-+	= add_builtin_function ("__builtin_arm_get_fpscr", ftype_get_fpscr,
- 				ARM_BUILTIN_GET_FPSCR, BUILT_IN_MD, NULL, NULL_TREE);
-       arm_builtin_decls[ARM_BUILTIN_SET_FPSCR]
--	= add_builtin_function ("__builtin_arm_stfscr", ftype_set_fpscr,
-+	= add_builtin_function ("__builtin_arm_set_fpscr", ftype_set_fpscr,
- 				ARM_BUILTIN_SET_FPSCR, BUILT_IN_MD, NULL, NULL_TREE);
+ static const struct tune_params cortexa53_tunings =
+@@ -590,7 +627,7 @@ static const struct tune_params cortexa53_tunings =
+   (AARCH64_FUSE_AES_AESMC | AARCH64_FUSE_MOV_MOVK | AARCH64_FUSE_ADRP_ADD
+    | AARCH64_FUSE_MOVK_MOVK | AARCH64_FUSE_ADRP_LDR), /* fusible_ops  */
+   16,	/* function_align.  */
+-  8,	/* jump_align.  */
++  4,	/* jump_align.  */
+   8,	/* loop_align.  */
+   2,	/* int_reassoc_width.  */
+   4,	/* fp_reassoc_width.  */
+@@ -598,9 +635,9 @@ static const struct tune_params cortexa53_tunings =
+   2,	/* min_div_recip_mul_sf.  */
+   2,	/* min_div_recip_mul_df.  */
+   0,	/* max_case_values.  */
+-  0,	/* cache_line_size.  */
+   tune_params::AUTOPREFETCHER_WEAK,	/* autoprefetcher_model.  */
+-  (AARCH64_EXTRA_TUNE_NONE)	/* tune_flags.  */
++  (AARCH64_EXTRA_TUNE_NONE),	/* tune_flags.  */
++  &generic_prefetch_tune
+ };
+ 
+ static const struct tune_params cortexa57_tunings =
+@@ -616,7 +653,7 @@ static const struct tune_params cortexa57_tunings =
+   (AARCH64_FUSE_AES_AESMC | AARCH64_FUSE_MOV_MOVK | AARCH64_FUSE_ADRP_ADD
+    | AARCH64_FUSE_MOVK_MOVK), /* fusible_ops  */
+   16,	/* function_align.  */
+-  8,	/* jump_align.  */
++  4,	/* jump_align.  */
+   8,	/* loop_align.  */
+   2,	/* int_reassoc_width.  */
+   4,	/* fp_reassoc_width.  */
+@@ -624,9 +661,9 @@ static const struct tune_params cortexa57_tunings =
+   2,	/* min_div_recip_mul_sf.  */
+   2,	/* min_div_recip_mul_df.  */
+   0,	/* max_case_values.  */
+-  0,	/* cache_line_size.  */
+   tune_params::AUTOPREFETCHER_WEAK,	/* autoprefetcher_model.  */
+-  (AARCH64_EXTRA_TUNE_RENAME_FMA_REGS)	/* tune_flags.  */
++  (AARCH64_EXTRA_TUNE_RENAME_FMA_REGS),	/* tune_flags.  */
++  &generic_prefetch_tune
+ };
+ 
+ static const struct tune_params cortexa72_tunings =
+@@ -642,7 +679,7 @@ static const struct tune_params cortexa72_tunings =
+   (AARCH64_FUSE_AES_AESMC | AARCH64_FUSE_MOV_MOVK | AARCH64_FUSE_ADRP_ADD
+    | AARCH64_FUSE_MOVK_MOVK), /* fusible_ops  */
+   16,	/* function_align.  */
+-  8,	/* jump_align.  */
++  4,	/* jump_align.  */
+   8,	/* loop_align.  */
+   2,	/* int_reassoc_width.  */
+   4,	/* fp_reassoc_width.  */
+@@ -650,9 +687,9 @@ static const struct tune_params cortexa72_tunings =
+   2,	/* min_div_recip_mul_sf.  */
+   2,	/* min_div_recip_mul_df.  */
+   0,	/* max_case_values.  */
+-  0,	/* cache_line_size.  */
+   tune_params::AUTOPREFETCHER_WEAK,	/* autoprefetcher_model.  */
+-  (AARCH64_EXTRA_TUNE_NONE)	/* tune_flags.  */
++  (AARCH64_EXTRA_TUNE_NONE),	/* tune_flags.  */
++  &generic_prefetch_tune
+ };
+ 
+ static const struct tune_params cortexa73_tunings =
+@@ -668,7 +705,7 @@ static const struct tune_params cortexa73_tunings =
+   (AARCH64_FUSE_AES_AESMC | AARCH64_FUSE_MOV_MOVK | AARCH64_FUSE_ADRP_ADD
+    | AARCH64_FUSE_MOVK_MOVK | AARCH64_FUSE_ADRP_LDR), /* fusible_ops  */
+   16,	/* function_align.  */
+-  8,	/* jump_align.  */
++  4,	/* jump_align.  */
+   8,	/* loop_align.  */
+   2,	/* int_reassoc_width.  */
+   4,	/* fp_reassoc_width.  */
+@@ -676,11 +713,13 @@ static const struct tune_params cortexa73_tunings =
+   2,	/* min_div_recip_mul_sf.  */
+   2,	/* min_div_recip_mul_df.  */
+   0,	/* max_case_values.  */
+-  0,	/* cache_line_size.  */
+   tune_params::AUTOPREFETCHER_WEAK,	/* autoprefetcher_model.  */
+-  (AARCH64_EXTRA_TUNE_NONE)	/* tune_flags.  */
++  (AARCH64_EXTRA_TUNE_NONE),	/* tune_flags.  */
++  &generic_prefetch_tune
+ };
+ 
++
++
+ static const struct tune_params exynosm1_tunings =
+ {
+   &exynosm1_extra_costs,
+@@ -701,9 +740,9 @@ static const struct tune_params exynosm1_tunings =
+   2,	/* min_div_recip_mul_sf.  */
+   2,	/* min_div_recip_mul_df.  */
+   48,	/* max_case_values.  */
+-  64,	/* cache_line_size.  */
+   tune_params::AUTOPREFETCHER_WEAK, /* autoprefetcher_model.  */
+-  (AARCH64_EXTRA_TUNE_NONE) /* tune_flags.  */
++  (AARCH64_EXTRA_TUNE_NONE), /* tune_flags.  */
++  &exynosm1_prefetch_tune
+ };
+ 
+ static const struct tune_params thunderx_tunings =
+@@ -726,9 +765,9 @@ static const struct tune_params thunderx_tunings =
+   2,	/* min_div_recip_mul_sf.  */
+   2,	/* min_div_recip_mul_df.  */
+   0,	/* max_case_values.  */
+-  0,	/* cache_line_size.  */
+   tune_params::AUTOPREFETCHER_OFF,	/* autoprefetcher_model.  */
+-  (AARCH64_EXTRA_TUNE_SLOW_UNALIGNED_LDPW)	/* tune_flags.  */
++  (AARCH64_EXTRA_TUNE_SLOW_UNALIGNED_LDPW),	/* tune_flags.  */
++  &generic_prefetch_tune
+ };
+ 
+ static const struct tune_params xgene1_tunings =
+@@ -751,9 +790,9 @@ static const struct tune_params xgene1_tunings =
+   2,	/* min_div_recip_mul_sf.  */
+   2,	/* min_div_recip_mul_df.  */
+   0,	/* max_case_values.  */
+-  0,	/* cache_line_size.  */
+   tune_params::AUTOPREFETCHER_OFF,	/* autoprefetcher_model.  */
+-  (AARCH64_EXTRA_TUNE_NONE)	/* tune_flags.  */
++  (AARCH64_EXTRA_TUNE_NONE),	/* tune_flags.  */
++  &generic_prefetch_tune
+ };
+ 
+ static const struct tune_params qdf24xx_tunings =
+@@ -777,9 +816,9 @@ static const struct tune_params qdf24xx_tunings =
+   2,	/* min_div_recip_mul_sf.  */
+   2,	/* min_div_recip_mul_df.  */
+   0,	/* max_case_values.  */
+-  64,	/* cache_line_size.  */
+   tune_params::AUTOPREFETCHER_STRONG,	/* autoprefetcher_model.  */
+-  (AARCH64_EXTRA_TUNE_NONE)		/* tune_flags.  */
++  (AARCH64_EXTRA_TUNE_NONE),		/* tune_flags.  */
++  &qdf24xx_prefetch_tune
+ };
+ 
+ static const struct tune_params thunderx2t99_tunings =
+@@ -802,9 +841,9 @@ static const struct tune_params thunderx2t99_tunings =
+   2,	/* min_div_recip_mul_sf.  */
+   2,	/* min_div_recip_mul_df.  */
+   0,	/* max_case_values.  */
+-  64,	/* cache_line_size.  */
+   tune_params::AUTOPREFETCHER_OFF,	/* autoprefetcher_model.  */
+-  (AARCH64_EXTRA_TUNE_NONE)	/* tune_flags.  */
++  (AARCH64_EXTRA_TUNE_NONE),	/* tune_flags.  */
++  &thunderx2t99_prefetch_tune
+ };
+ 
+ /* Support for fine-grained override of the tuning structures.  */
+@@ -2683,11 +2722,19 @@ aarch64_emit_probe_stack_range (HOST_WIDE_INT first, HOST_WIDE_INT size)
+ 		     plus_constant (Pmode, stack_pointer_rtx, -first));
+ 
+       /* LAST_ADDR = SP + FIRST + ROUNDED_SIZE.  */
+-      emit_set_insn (reg2,
+-		     plus_constant (Pmode, stack_pointer_rtx,
+-				    -(first + rounded_size)));
+-
+-
++      HOST_WIDE_INT adjustment = - (first + rounded_size);
++      if (! aarch64_uimm12_shift (adjustment))
++	{
++	  aarch64_internal_mov_immediate (reg2, GEN_INT (adjustment),
++					  true, Pmode);
++	  emit_set_insn (reg2, gen_rtx_PLUS (Pmode, stack_pointer_rtx, reg2));
++	}
++      else
++	{
++	  emit_set_insn (reg2,
++			 plus_constant (Pmode, stack_pointer_rtx, adjustment));
++	}
++	  	
+       /* Step 3: the loop
+ 
+ 	 do
+@@ -4549,6 +4596,24 @@ aarch64_classify_address (struct aarch64_address_info *info,
+     }
+ }
+ 
++/* Return true if the address X is valid for a PRFM instruction.
++   STRICT_P is true if we should do strict checking with
++   aarch64_classify_address.  */
++
++bool
++aarch64_address_valid_for_prefetch_p (rtx x, bool strict_p)
++{
++  struct aarch64_address_info addr;
++
++  /* PRFM accepts the same addresses as DImode...  */
++  bool res = aarch64_classify_address (&addr, x, DImode, MEM, strict_p);
++  if (!res)
++    return false;
++
++  /* ... except writeback forms.  */
++  return addr.type != ADDRESS_REG_WB;
++}
++
+ bool
+ aarch64_symbolic_address_p (rtx x)
+ {
+@@ -4633,6 +4698,50 @@ aarch64_fixed_condition_code_regs (unsigned int *p1, unsigned int *p2)
+   return true;
+ }
+ 
++/* This function is used by the call expanders of the machine description.
++   RESULT is the register in which the result is returned.  It's NULL for
++   "call" and "sibcall".
++   MEM is the location of the function call.
++   SIBCALL indicates whether this function call is normal call or sibling call.
++   It will generate different pattern accordingly.  */
++
++void
++aarch64_expand_call (rtx result, rtx mem, bool sibcall)
++{
++  rtx call, callee, tmp;
++  rtvec vec;
++  machine_mode mode;
++
++  gcc_assert (MEM_P (mem));
++  callee = XEXP (mem, 0);
++  mode = GET_MODE (callee);
++  gcc_assert (mode == Pmode);
++
++  /* Decide if we should generate indirect calls by loading the
++     address of the callee into a register before performing
++     the branch-and-link.  */
++  if (SYMBOL_REF_P (callee)
++      ? (aarch64_is_long_call_p (callee)
++	 || aarch64_is_noplt_call_p (callee))
++      : !REG_P (callee))
++    XEXP (mem, 0) = force_reg (mode, callee);
++
++  call = gen_rtx_CALL (VOIDmode, mem, const0_rtx);
++
++  if (result != NULL_RTX)
++    call = gen_rtx_SET (result, call);
++
++  if (sibcall)
++    tmp = ret_rtx;
++  else
++    tmp = gen_rtx_CLOBBER (VOIDmode, gen_rtx_REG (Pmode, LR_REGNUM));
++
++  vec = gen_rtvec (2, call, tmp);
++  call = gen_rtx_PARALLEL (VOIDmode, vec);
++
++  aarch64_emit_call_insn (call);
++}
++
+ /* Emit call insn with PAT and do aarch64-specific handling.  */
+ 
+ void
+@@ -4705,7 +4814,7 @@ aarch64_select_cc_mode (RTX_CODE code, rtx x, rtx y)
+      the comparison will have to be swapped when we emit the assembly
+      code.  */
+   if ((GET_MODE (x) == SImode || GET_MODE (x) == DImode)
+-      && (REG_P (y) || GET_CODE (y) == SUBREG)
++      && (REG_P (y) || GET_CODE (y) == SUBREG || y == const0_rtx)
+       && (GET_CODE (x) == ASHIFT || GET_CODE (x) == ASHIFTRT
+ 	  || GET_CODE (x) == LSHIFTRT
+ 	  || GET_CODE (x) == ZERO_EXTEND || GET_CODE (x) == SIGN_EXTEND))
+@@ -7482,17 +7591,13 @@ cost_plus:
+     case UMOD:
+       if (speed)
+ 	{
++	  /* Slighly prefer UMOD over SMOD.  */
+ 	  if (VECTOR_MODE_P (mode))
+ 	    *cost += extra_cost->vect.alu;
+ 	  else if (GET_MODE_CLASS (mode) == MODE_INT)
+ 	    *cost += (extra_cost->mult[mode == DImode].add
+-		      + extra_cost->mult[mode == DImode].idiv);
+-	  else if (mode == DFmode)
+-	    *cost += (extra_cost->fp[1].mult
+-		      + extra_cost->fp[1].div);
+-	  else if (mode == SFmode)
+-	    *cost += (extra_cost->fp[0].mult
+-		      + extra_cost->fp[0].div);
++		      + extra_cost->mult[mode == DImode].idiv
++		      + (code == MOD ? 1 : 0));
+ 	}
+       return false;  /* All arguments need to be in registers.  */
+ 
+@@ -7506,7 +7611,9 @@ cost_plus:
+ 	  else if (GET_MODE_CLASS (mode) == MODE_INT)
+ 	    /* There is no integer SQRT, so only DIV and UDIV can get
+ 	       here.  */
+-	    *cost += extra_cost->mult[mode == DImode].idiv;
++	    *cost += (extra_cost->mult[mode == DImode].idiv
++		     /* Slighly prefer UDIV over SDIV.  */
++		     + (code == DIV ? 1 : 0));
+ 	  else
+ 	    *cost += extra_cost->fp[mode == DFmode].div;
+ 	}
+@@ -8687,12 +8794,38 @@ aarch64_override_options_internal (struct gcc_options *opts)
+ 			 opts->x_param_values,
+ 			 global_options_set.x_param_values);
+ 
+-  /* Set the L1 cache line size.  */
+-  if (selected_cpu->tune->cache_line_size != 0)
++  /* Set up parameters to be used in prefetching algorithm.  Do not
++     override the defaults unless we are tuning for a core we have
++     researched values for.  */
++  if (aarch64_tune_params.prefetch->num_slots > 0)
++    maybe_set_param_value (PARAM_SIMULTANEOUS_PREFETCHES,
++			   aarch64_tune_params.prefetch->num_slots,
++			   opts->x_param_values,
++			   global_options_set.x_param_values);
++  if (aarch64_tune_params.prefetch->l1_cache_size >= 0)
++    maybe_set_param_value (PARAM_L1_CACHE_SIZE,
++			   aarch64_tune_params.prefetch->l1_cache_size,
++			   opts->x_param_values,
++			   global_options_set.x_param_values);
++  if (aarch64_tune_params.prefetch->l1_cache_line_size >= 0)
+     maybe_set_param_value (PARAM_L1_CACHE_LINE_SIZE,
+-			   selected_cpu->tune->cache_line_size,
++			   aarch64_tune_params.prefetch->l1_cache_line_size,
+ 			   opts->x_param_values,
+ 			   global_options_set.x_param_values);
++  if (aarch64_tune_params.prefetch->l2_cache_size >= 0)
++    maybe_set_param_value (PARAM_L2_CACHE_SIZE,
++			   aarch64_tune_params.prefetch->l2_cache_size,
++			   opts->x_param_values,
++			   global_options_set.x_param_values);
++
++  /* Enable sw prefetching at specified optimization level for
++     CPUS that have prefetch.  Lower optimization level threshold by 1
++     when profiling is enabled.  */
++  if (opts->x_flag_prefetch_loop_arrays < 0
++      && !opts->x_optimize_size
++      && aarch64_tune_params.prefetch->default_opt_level >= 0
++      && opts->x_optimize >= aarch64_tune_params.prefetch->default_opt_level)
++    opts->x_flag_prefetch_loop_arrays = 1;
+ 
+   aarch64_override_options_after_change_1 (opts);
+ }
+@@ -11647,6 +11780,57 @@ aarch64_expand_vector_init (rtx target, rtx vals)
+       return;
      }
  
-Index: b/src/gcc/config/arm/arm.c
-===================================================================
++  enum insn_code icode = optab_handler (vec_set_optab, mode);
++  gcc_assert (icode != CODE_FOR_nothing);
++
++  /* If there are only variable elements, try to optimize
++     the insertion using dup for the most common element
++     followed by insertions.  */
++
++  /* The algorithm will fill matches[*][0] with the earliest matching element,
++     and matches[X][1] with the count of duplicate elements (if X is the
++     earliest element which has duplicates).  */
++
++  if (n_var == n_elts && n_elts <= 16)
++    {
++      int matches[16][2] = {0};
++      for (int i = 0; i < n_elts; i++)
++	{
++	  for (int j = 0; j <= i; j++)
++	    {
++	      if (rtx_equal_p (XVECEXP (vals, 0, i), XVECEXP (vals, 0, j)))
++		{
++		  matches[i][0] = j;
++		  matches[j][1]++;
++		  break;
++		}
++	    }
++	}
++      int maxelement = 0;
++      int maxv = 0;
++      for (int i = 0; i < n_elts; i++)
++	if (matches[i][1] > maxv)
++	  {
++	    maxelement = i;
++	    maxv = matches[i][1];
++	  }
++
++      /* Create a duplicate of the most common element.  */
++      rtx x = copy_to_mode_reg (inner_mode, XVECEXP (vals, 0, maxelement));
++      aarch64_emit_move (target, gen_rtx_VEC_DUPLICATE (mode, x));
++
++      /* Insert the rest.  */
++      for (int i = 0; i < n_elts; i++)
++	{
++	  rtx x = XVECEXP (vals, 0, i);
++	  if (matches[i][0] == maxelement)
++	    continue;
++	  x = copy_to_mode_reg (inner_mode, x);
++	  emit_insn (GEN_FCN (icode) (target, x, GEN_INT (i)));
++	}
++      return;
++    }
++
+   /* Initialise a vector which is part-variable.  We want to first try
+      to build those lanes which are constant in the most efficient way we
+      can.  */
+@@ -11680,10 +11864,6 @@ aarch64_expand_vector_init (rtx target, rtx vals)
+     }
+ 
+   /* Insert the variable lanes directly.  */
+-
+-  enum insn_code icode = optab_handler (vec_set_optab, mode);
+-  gcc_assert (icode != CODE_FOR_nothing);
+-
+   for (int i = 0; i < n_elts; i++)
+     {
+       rtx x = XVECEXP (vals, 0, i);
+@@ -12049,6 +12229,17 @@ aarch64_split_compare_and_swap (rtx operands[])
+   mode = GET_MODE (mem);
+   model = memmodel_from_int (INTVAL (model_rtx));
+ 
++  /* When OLDVAL is zero and we want the strong version we can emit a tighter
++    loop:
++    .label1:
++	LD[A]XR	rval, [mem]
++	CBNZ	rval, .label2
++	ST[L]XR	scratch, newval, [mem]
++	CBNZ	scratch, .label1
++    .label2:
++	CMP	rval, 0.  */
++  bool strong_zero_p = !is_weak && oldval == const0_rtx;
++
+   label1 = NULL;
+   if (!is_weak)
+     {
+@@ -12065,11 +12256,21 @@ aarch64_split_compare_and_swap (rtx operands[])
+   else
+     aarch64_emit_load_exclusive (mode, rval, mem, model_rtx);
+ 
+-  cond = aarch64_gen_compare_reg (NE, rval, oldval);
+-  x = gen_rtx_NE (VOIDmode, cond, const0_rtx);
+-  x = gen_rtx_IF_THEN_ELSE (VOIDmode, x,
+-			    gen_rtx_LABEL_REF (Pmode, label2), pc_rtx);
+-  aarch64_emit_unlikely_jump (gen_rtx_SET (pc_rtx, x));
++  if (strong_zero_p)
++    {
++      x = gen_rtx_NE (VOIDmode, rval, const0_rtx);
++      x = gen_rtx_IF_THEN_ELSE (VOIDmode, x,
++				gen_rtx_LABEL_REF (Pmode, label2), pc_rtx);
++      aarch64_emit_unlikely_jump (gen_rtx_SET (pc_rtx, x));
++    }
++  else
++    {
++      cond = aarch64_gen_compare_reg (NE, rval, oldval);
++      x = gen_rtx_NE (VOIDmode, cond, const0_rtx);
++      x = gen_rtx_IF_THEN_ELSE (VOIDmode, x,
++				 gen_rtx_LABEL_REF (Pmode, label2), pc_rtx);
++      aarch64_emit_unlikely_jump (gen_rtx_SET (pc_rtx, x));
++    }
+ 
+   aarch64_emit_store_exclusive (mode, scratch, mem, newval, model_rtx);
+ 
+@@ -12088,7 +12289,15 @@ aarch64_split_compare_and_swap (rtx operands[])
+     }
+ 
+   emit_label (label2);
+-
++  /* If we used a CBNZ in the exchange loop emit an explicit compare with RVAL
++     to set the condition flags.  If this is not used it will be removed by
++     later passes.  */
++  if (strong_zero_p)
++    {
++      cond = gen_rtx_REG (CCmode, CC_REGNUM);
++      x = gen_rtx_COMPARE (CCmode, rval, const0_rtx);
++      emit_insn (gen_rtx_SET (cond, x));
++    }
+   /* Emit any final barrier needed for a __sync operation.  */
+   if (is_mm_sync (model))
+     aarch64_emit_post_barrier (model);
+--- a/src/gcc/config/aarch64/aarch64.md
++++ b/src/gcc/config/aarch64/aarch64.md
+@@ -519,27 +519,31 @@
+ )
+ 
+ (define_insn "prefetch"
+-  [(prefetch (match_operand:DI 0 "register_operand" "r")
++  [(prefetch (match_operand:DI 0 "aarch64_prefetch_operand" "Dp")
+             (match_operand:QI 1 "const_int_operand" "")
+             (match_operand:QI 2 "const_int_operand" ""))]
+   ""
+   {
+-    const char * pftype[2][4] = 
++    const char * pftype[2][4] =
+     {
+-      {"prfm\\tPLDL1STRM, %a0",
+-       "prfm\\tPLDL3KEEP, %a0",
+-       "prfm\\tPLDL2KEEP, %a0",
+-       "prfm\\tPLDL1KEEP, %a0"},
+-      {"prfm\\tPSTL1STRM, %a0",
+-       "prfm\\tPSTL3KEEP, %a0",
+-       "prfm\\tPSTL2KEEP, %a0",
+-       "prfm\\tPSTL1KEEP, %a0"},
++      {"prfm\\tPLDL1STRM, %0",
++       "prfm\\tPLDL3KEEP, %0",
++       "prfm\\tPLDL2KEEP, %0",
++       "prfm\\tPLDL1KEEP, %0"},
++      {"prfm\\tPSTL1STRM, %0",
++       "prfm\\tPSTL3KEEP, %0",
++       "prfm\\tPSTL2KEEP, %0",
++       "prfm\\tPSTL1KEEP, %0"},
+     };
+ 
+     int locality = INTVAL (operands[2]);
+ 
+     gcc_assert (IN_RANGE (locality, 0, 3));
+ 
++    /* PRFM accepts the same addresses as a 64-bit LDR so wrap
++       the address into a DImode MEM so that aarch64_print_operand knows
++       how to print it.  */
++    operands[0] = gen_rtx_MEM (DImode, operands[0]);
+     return pftype[INTVAL(operands[1])][locality];
+   }
+   [(set_attr "type" "load1")]
+@@ -713,12 +717,6 @@
+ ;; Subroutine calls and sibcalls
+ ;; -------------------------------------------------------------------
+ 
+-(define_expand "call_internal"
+-  [(parallel [(call (match_operand 0 "memory_operand" "")
+-		    (match_operand 1 "general_operand" ""))
+-	      (use (match_operand 2 "" ""))
+-	      (clobber (reg:DI LR_REGNUM))])])
+-
+ (define_expand "call"
+   [(parallel [(call (match_operand 0 "memory_operand" "")
+ 		    (match_operand 1 "general_operand" ""))
+@@ -727,57 +725,22 @@
+   ""
+   "
+   {
+-    rtx callee, pat;
+-
+-    /* In an untyped call, we can get NULL for operand 2.  */
+-    if (operands[2] == NULL)
+-      operands[2] = const0_rtx;
+-
+-    /* Decide if we should generate indirect calls by loading the
+-       64-bit address of the callee into a register before performing
+-       the branch-and-link.  */
+-    callee = XEXP (operands[0], 0);
+-    if (GET_CODE (callee) == SYMBOL_REF
+-	? (aarch64_is_long_call_p (callee)
+-	   || aarch64_is_noplt_call_p (callee))
+-	: !REG_P (callee))
+-      XEXP (operands[0], 0) = force_reg (Pmode, callee);
+-
+-    pat = gen_call_internal (operands[0], operands[1], operands[2]);
+-    aarch64_emit_call_insn (pat);
++    aarch64_expand_call (NULL_RTX, operands[0], false);
+     DONE;
+   }"
+ )
+ 
+-(define_insn "*call_reg"
+-  [(call (mem:DI (match_operand:DI 0 "register_operand" "r"))
++(define_insn "*call_insn"
++  [(call (mem:DI (match_operand:DI 0 "aarch64_call_insn_operand" "r, Usf"))
+ 	 (match_operand 1 "" ""))
+-   (use (match_operand 2 "" ""))
+    (clobber (reg:DI LR_REGNUM))]
+   ""
+-  "blr\\t%0"
+-  [(set_attr "type" "call")]
+-)
+-
+-(define_insn "*call_symbol"
+-  [(call (mem:DI (match_operand:DI 0 "" ""))
+-	 (match_operand 1 "" ""))
+-   (use (match_operand 2 "" ""))
+-   (clobber (reg:DI LR_REGNUM))]
+-  "GET_CODE (operands[0]) == SYMBOL_REF
+-   && !aarch64_is_long_call_p (operands[0])
+-   && !aarch64_is_noplt_call_p (operands[0])"
+-  "bl\\t%a0"
+-  [(set_attr "type" "call")]
++  "@
++  blr\\t%0
++  bl\\t%a0"
++  [(set_attr "type" "call, call")]
+ )
+ 
+-(define_expand "call_value_internal"
+-  [(parallel [(set (match_operand 0 "" "")
+-		   (call (match_operand 1 "memory_operand" "")
+-			 (match_operand 2 "general_operand" "")))
+-	      (use (match_operand 3 "" ""))
+-	      (clobber (reg:DI LR_REGNUM))])])
+-
+ (define_expand "call_value"
+   [(parallel [(set (match_operand 0 "" "")
+ 		   (call (match_operand 1 "memory_operand" "")
+@@ -787,60 +750,23 @@
+   ""
+   "
+   {
+-    rtx callee, pat;
+-
+-    /* In an untyped call, we can get NULL for operand 3.  */
+-    if (operands[3] == NULL)
+-      operands[3] = const0_rtx;
+-
+-    /* Decide if we should generate indirect calls by loading the
+-       64-bit address of the callee into a register before performing
+-       the branch-and-link.  */
+-    callee = XEXP (operands[1], 0);
+-    if (GET_CODE (callee) == SYMBOL_REF
+-	? (aarch64_is_long_call_p (callee)
+-	   || aarch64_is_noplt_call_p (callee))
+-	: !REG_P (callee))
+-      XEXP (operands[1], 0) = force_reg (Pmode, callee);
+-
+-    pat = gen_call_value_internal (operands[0], operands[1], operands[2],
+-                                   operands[3]);
+-    aarch64_emit_call_insn (pat);
++    aarch64_expand_call (operands[0], operands[1], false);
+     DONE;
+   }"
+ )
+ 
+-(define_insn "*call_value_reg"
++(define_insn "*call_value_insn"
+   [(set (match_operand 0 "" "")
+-	(call (mem:DI (match_operand:DI 1 "register_operand" "r"))
++	(call (mem:DI (match_operand:DI 1 "aarch64_call_insn_operand" "r, Usf"))
+ 		      (match_operand 2 "" "")))
+-   (use (match_operand 3 "" ""))
+    (clobber (reg:DI LR_REGNUM))]
+   ""
+-  "blr\\t%1"
+-  [(set_attr "type" "call")]
+-
+-)
+-
+-(define_insn "*call_value_symbol"
+-  [(set (match_operand 0 "" "")
+-	(call (mem:DI (match_operand:DI 1 "" ""))
+-	      (match_operand 2 "" "")))
+-   (use (match_operand 3 "" ""))
+-   (clobber (reg:DI LR_REGNUM))]
+-  "GET_CODE (operands[1]) == SYMBOL_REF
+-   && !aarch64_is_long_call_p (operands[1])
+-   && !aarch64_is_noplt_call_p (operands[1])"
+-  "bl\\t%a1"
+-  [(set_attr "type" "call")]
++  "@
++  blr\\t%1
++  bl\\t%a1"
++  [(set_attr "type" "call, call")]
+ )
+ 
+-(define_expand "sibcall_internal"
+-  [(parallel [(call (match_operand 0 "memory_operand" "")
+-		    (match_operand 1 "general_operand" ""))
+-	      (return)
+-	      (use (match_operand 2 "" ""))])])
+-
+ (define_expand "sibcall"
+   [(parallel [(call (match_operand 0 "memory_operand" "")
+ 		    (match_operand 1 "general_operand" ""))
+@@ -848,29 +774,11 @@
+ 	      (use (match_operand 2 "" ""))])]
+   ""
+   {
+-    rtx pat;
+-    rtx callee = XEXP (operands[0], 0);
+-    if (!REG_P (callee)
+-       && ((GET_CODE (callee) != SYMBOL_REF)
+-	   || aarch64_is_noplt_call_p (callee)))
+-      XEXP (operands[0], 0) = force_reg (Pmode, callee);
+-
+-    if (operands[2] == NULL_RTX)
+-      operands[2] = const0_rtx;
+-
+-    pat = gen_sibcall_internal (operands[0], operands[1], operands[2]);
+-    aarch64_emit_call_insn (pat);
++    aarch64_expand_call (NULL_RTX, operands[0], true);
+     DONE;
+   }
+ )
+ 
+-(define_expand "sibcall_value_internal"
+-  [(parallel [(set (match_operand 0 "" "")
+-		   (call (match_operand 1 "memory_operand" "")
+-			 (match_operand 2 "general_operand" "")))
+-	      (return)
+-	      (use (match_operand 3 "" ""))])])
+-
+ (define_expand "sibcall_value"
+   [(parallel [(set (match_operand 0 "" "")
+ 		   (call (match_operand 1 "memory_operand" "")
+@@ -879,19 +787,7 @@
+ 	      (use (match_operand 3 "" ""))])]
+   ""
+   {
+-    rtx pat;
+-    rtx callee = XEXP (operands[1], 0);
+-    if (!REG_P (callee)
+-       && ((GET_CODE (callee) != SYMBOL_REF)
+-	   || aarch64_is_noplt_call_p (callee)))
+-      XEXP (operands[1], 0) = force_reg (Pmode, callee);
+-
+-    if (operands[3] == NULL_RTX)
+-      operands[3] = const0_rtx;
+-
+-    pat = gen_sibcall_value_internal (operands[0], operands[1], operands[2],
+-                                      operands[3]);
+-    aarch64_emit_call_insn (pat);
++    aarch64_expand_call (operands[0], operands[1], true);
+     DONE;
+   }
+ )
+@@ -899,8 +795,7 @@
+ (define_insn "*sibcall_insn"
+   [(call (mem:DI (match_operand:DI 0 "aarch64_call_insn_operand" "Ucs, Usf"))
+ 	 (match_operand 1 "" ""))
+-   (return)
+-   (use (match_operand 2 "" ""))]
++   (return)]
+   "SIBLING_CALL_P (insn)"
+   "@
+    br\\t%0
+@@ -913,8 +808,7 @@
+ 	(call (mem:DI
+ 		(match_operand:DI 1 "aarch64_call_insn_operand" "Ucs, Usf"))
+ 	      (match_operand 2 "" "")))
+-   (return)
+-   (use (match_operand 3 "" ""))]
++   (return)]
+   "SIBLING_CALL_P (insn)"
+   "@
+    br\\t%1
+@@ -1026,8 +920,8 @@
+ )
+ 
+ (define_insn_and_split "*movsi_aarch64"
+-  [(set (match_operand:SI 0 "nonimmediate_operand" "=r,k,r,r,r,r,*w,m,  m,r,r  ,*w, r,*w")
+-	(match_operand:SI 1 "aarch64_mov_operand"  " r,r,k,M,n,m, m,rZ,*w,S,Ush,rZ,*w,*w"))]
++  [(set (match_operand:SI 0 "nonimmediate_operand" "=r,k,r,r,r,r,*w,m,  m,r,r  ,*w,r,*w")
++	(match_operand:SI 1 "aarch64_mov_operand"  " r,r,k,M,n,m, m,rZ,*w,Usa,Ush,rZ,w,*w"))]
+   "(register_operand (operands[0], SImode)
+     || aarch64_reg_or_zero (operands[1], SImode))"
+   "@
+@@ -1058,8 +952,8 @@
+ )
+ 
+ (define_insn_and_split "*movdi_aarch64"
+-  [(set (match_operand:DI 0 "nonimmediate_operand" "=r,k,r,r,r,r,*w,m,  m,r,r,  *w, r,*w,w")
+-	(match_operand:DI 1 "aarch64_mov_operand"  " r,r,k,N,n,m, m,rZ,*w,S,Ush,rZ,*w,*w,Dd"))]
++  [(set (match_operand:DI 0 "nonimmediate_operand" "=r,k,r,r,r,r,*w,m,  m,r,r,  *w,r,*w,w")
++	(match_operand:DI 1 "aarch64_mov_operand"  " r,r,k,N,n,m, m,rZ,*w,Usa,Ush,rZ,w,*w,Dd"))]
+   "(register_operand (operands[0], DImode)
+     || aarch64_reg_or_zero (operands[1], DImode))"
+   "@
+@@ -2340,6 +2234,55 @@
+   [(set_attr "type" "alus_sreg")]
+ )
+ 
++(define_insn "sub<mode>3_compare1_imm"
++  [(set (reg:CC CC_REGNUM)
++	(compare:CC
++	  (match_operand:GPI 1 "register_operand" "r")
++	  (match_operand:GPI 3 "const_int_operand" "n")))
++   (set (match_operand:GPI 0 "register_operand" "=r")
++	(plus:GPI (match_dup 1)
++		  (match_operand:GPI 2 "aarch64_sub_immediate" "J")))]
++  "INTVAL (operands[3]) == -INTVAL (operands[2])"
++  "subs\\t%<w>0, %<w>1, #%n2"
++  [(set_attr "type" "alus_sreg")]
++)
++
++(define_peephole2
++  [(set (match_operand:GPI 0 "register_operand")
++	(minus:GPI (match_operand:GPI 1 "aarch64_reg_or_zero")
++		    (match_operand:GPI 2 "aarch64_reg_or_zero")))
++   (set (reg:CC CC_REGNUM)
++	(compare:CC
++	  (match_dup 1)
++	  (match_dup 2)))]
++  "!reg_overlap_mentioned_p (operands[0], operands[1])
++   && !reg_overlap_mentioned_p (operands[0], operands[2])"
++  [(const_int 0)]
++  {
++    emit_insn (gen_sub<mode>3_compare1 (operands[0], operands[1],
++					 operands[2]));
++    DONE;
++  }
++)
++
++(define_peephole2
++  [(set (match_operand:GPI 0 "register_operand")
++	(plus:GPI (match_operand:GPI 1 "register_operand")
++		  (match_operand:GPI 2 "aarch64_sub_immediate")))
++   (set (reg:CC CC_REGNUM)
++	(compare:CC
++	  (match_dup 1)
++	  (match_operand:GPI 3 "const_int_operand")))]
++  "!reg_overlap_mentioned_p (operands[0], operands[1])
++   && INTVAL (operands[3]) == -INTVAL (operands[2])"
++  [(const_int 0)]
++  {
++    emit_insn (gen_sub<mode>3_compare1_imm (operands[0], operands[1],
++					 operands[2], operands[3]));
++    DONE;
++  }
++)
++
+ (define_insn "*sub_<shift>_<mode>"
+   [(set (match_operand:GPI 0 "register_operand" "=r")
+ 	(minus:GPI (match_operand:GPI 3 "register_operand" "r")
+@@ -5030,14 +4973,16 @@
+    (match_operand:SF 2 "register_operand")]
+   "TARGET_FLOAT && TARGET_SIMD"
+ {
+-  rtx mask = gen_reg_rtx (DImode);
++  rtx v_bitmask = gen_reg_rtx (V2SImode);
+ 
+   /* Juggle modes to get us in to a vector mode for BSL.  */
+-  rtx op1 = lowpart_subreg (V2SFmode, operands[1], SFmode);
++  rtx op1 = lowpart_subreg (DImode, operands[1], SFmode);
+   rtx op2 = lowpart_subreg (V2SFmode, operands[2], SFmode);
+   rtx tmp = gen_reg_rtx (V2SFmode);
+-  emit_move_insn (mask, GEN_INT (HOST_WIDE_INT_1U << 31));
+-  emit_insn (gen_aarch64_simd_bslv2sf (tmp, mask, op2, op1));
++  emit_move_insn (v_bitmask,
++		  aarch64_simd_gen_const_vector_dup (V2SImode,
++						     HOST_WIDE_INT_M1U << 31));
++  emit_insn (gen_aarch64_simd_bslv2sf (tmp, v_bitmask, op2, op1));
+   emit_move_insn (operands[0], lowpart_subreg (SFmode, tmp, V2SFmode));
+   DONE;
+ }
+--- a/src/gcc/config/aarch64/atomics.md
++++ b/src/gcc/config/aarch64/atomics.md
+@@ -25,7 +25,7 @@
+    (match_operand:ALLI 1 "register_operand" "")			;; val out
+    (match_operand:ALLI 2 "aarch64_sync_memory_operand" "")	;; memory
+    (match_operand:ALLI 3 "general_operand" "")			;; expected
+-   (match_operand:ALLI 4 "register_operand" "")			;; desired
++   (match_operand:ALLI 4 "aarch64_reg_or_zero" "")			;; desired
+    (match_operand:SI 5 "const_int_operand")			;; is_weak
+    (match_operand:SI 6 "const_int_operand")			;; mod_s
+    (match_operand:SI 7 "const_int_operand")]			;; mod_f
+@@ -45,7 +45,7 @@
+    (set (match_dup 1)
+     (unspec_volatile:SHORT
+       [(match_operand:SI 2 "aarch64_plus_operand" "rI")	;; expected
+-       (match_operand:SHORT 3 "register_operand" "r")	;; desired
++       (match_operand:SHORT 3 "aarch64_reg_or_zero" "rZ")	;; desired
+        (match_operand:SI 4 "const_int_operand")		;; is_weak
+        (match_operand:SI 5 "const_int_operand")		;; mod_s
+        (match_operand:SI 6 "const_int_operand")]	;; mod_f
+@@ -69,7 +69,7 @@
+    (set (match_dup 1)
+     (unspec_volatile:GPI
+       [(match_operand:GPI 2 "aarch64_plus_operand" "rI")	;; expect
+-       (match_operand:GPI 3 "register_operand" "r")		;; desired
++       (match_operand:GPI 3 "aarch64_reg_or_zero" "rZ")		;; desired
+        (match_operand:SI 4 "const_int_operand")			;; is_weak
+        (match_operand:SI 5 "const_int_operand")			;; mod_s
+        (match_operand:SI 6 "const_int_operand")]		;; mod_f
+@@ -534,7 +534,7 @@
+     (unspec_volatile:SI [(const_int 0)] UNSPECV_SX))
+    (set (match_operand:ALLI 1 "aarch64_sync_memory_operand" "=Q")
+     (unspec_volatile:ALLI
+-      [(match_operand:ALLI 2 "register_operand" "r")
++      [(match_operand:ALLI 2 "aarch64_reg_or_zero" "rZ")
+        (match_operand:SI 3 "const_int_operand")]
+       UNSPECV_SX))]
+   ""
+--- a/src/gcc/config/aarch64/constraints.md
++++ b/src/gcc/config/aarch64/constraints.md
+@@ -98,6 +98,14 @@
+   (and (match_code "high")
+        (match_test "aarch64_valid_symref (XEXP (op, 0), GET_MODE (XEXP (op, 0)))")))
+ 
++(define_constraint "Usa"
++  "@internal
++   A constraint that matches an absolute symbolic address that can be
++   loaded by a single ADR."
++  (and (match_code "const,symbol_ref,label_ref")
++       (match_test "aarch64_symbolic_address_p (op)")
++       (match_test "aarch64_mov_operand_p (op, GET_MODE (op))")))
++
+ (define_constraint "Uss"
+   "@internal
+   A constraint that matches an immediate shift constant in SImode."
+@@ -118,7 +126,8 @@
+ (define_constraint "Usf"
+   "@internal Usf is a symbol reference under the context where plt stub allowed."
+   (and (match_code "symbol_ref")
+-       (match_test "!aarch64_is_noplt_call_p (op)")))
++       (match_test "!(aarch64_is_noplt_call_p (op)
++		      || aarch64_is_long_call_p (op))")))
+ 
+ (define_constraint "UsM"
+   "@internal
+@@ -214,3 +223,8 @@
+  A constraint that matches an immediate operand valid for AdvSIMD scalar."
+  (and (match_code "const_int")
+       (match_test "aarch64_simd_imm_scalar_p (op, GET_MODE (op))")))
++
++(define_address_constraint "Dp"
++  "@internal
++ An address valid for a prefetch instruction."
++ (match_test "aarch64_address_valid_for_prefetch_p (op, true)"))
+--- a/src/gcc/config/aarch64/predicates.md
++++ b/src/gcc/config/aarch64/predicates.md
+@@ -77,6 +77,10 @@
+ (define_predicate "aarch64_fp_vec_pow2"
+   (match_test "aarch64_vec_fpconst_pow_of_2 (op) > 0"))
+ 
++(define_predicate "aarch64_sub_immediate"
++  (and (match_code "const_int")
++       (match_test "aarch64_uimm12_shift (-INTVAL (op))")))
++
+ (define_predicate "aarch64_plus_immediate"
+   (and (match_code "const_int")
+        (ior (match_test "aarch64_uimm12_shift (INTVAL (op))")
+@@ -165,6 +169,9 @@
+        (match_test "aarch64_legitimate_address_p (mode, XEXP (op, 0), PARALLEL,
+ 					       0)")))
+ 
++(define_predicate "aarch64_prefetch_operand"
++  (match_test "aarch64_address_valid_for_prefetch_p (op, false)"))
++
+ (define_predicate "aarch64_valid_symref"
+   (match_code "const, symbol_ref, label_ref")
+ {
+--- a/src/gcc/config/aarch64/thunderx2t99.md
++++ b/src/gcc/config/aarch64/thunderx2t99.md
+@@ -441,3 +441,23 @@
+   (and (eq_attr "tune" "thunderx2t99")
+        (eq_attr "type" "neon_store2_one_lane,neon_store2_one_lane_q"))
+   "thunderx2t99_ls01,thunderx2t99_f01")
++
++;; Crypto extensions.
++
++(define_insn_reservation "thunderx2t99_aes" 5
++  (and (eq_attr "tune" "thunderx2t99")
++       (eq_attr "type" "crypto_aese,crypto_aesmc"))
++  "thunderx2t99_f1")
++
++(define_insn_reservation "thunderx2t99_sha" 7
++  (and (eq_attr "tune" "thunderx2t99")
++       (eq_attr "type" "crypto_sha1_fast,crypto_sha1_xor,crypto_sha1_slow,\
++			crypto_sha256_fast,crypto_sha256_slow"))
++  "thunderx2t99_f1")
++
++;; CRC extension.
++
++(define_insn_reservation "thunderx2t99_crc" 4
++  (and (eq_attr "tune" "thunderx2t99")
++       (eq_attr "type" "crc"))
++  "thunderx2t99_i1")
+--- a/src/gcc/config/arm/aarch-common-protos.h
++++ b/src/gcc/config/arm/aarch-common-protos.h
+@@ -30,7 +30,9 @@ extern bool aarch_rev16_p (rtx);
+ extern bool aarch_rev16_shleft_mask_imm_p (rtx, machine_mode);
+ extern bool aarch_rev16_shright_mask_imm_p (rtx, machine_mode);
+ extern int arm_early_load_addr_dep (rtx, rtx);
++extern int arm_early_load_addr_dep_ptr (rtx, rtx);
+ extern int arm_early_store_addr_dep (rtx, rtx);
++extern int arm_early_store_addr_dep_ptr (rtx, rtx);
+ extern int arm_mac_accumulator_is_mul_result (rtx, rtx);
+ extern int arm_mac_accumulator_is_result (rtx, rtx);
+ extern int arm_no_early_alu_shift_dep (rtx, rtx);
+--- a/src/gcc/config/arm/aarch-common.c
++++ b/src/gcc/config/arm/aarch-common.c
+@@ -241,6 +241,24 @@ arm_early_load_addr_dep (rtx producer, rtx consumer)
+   return reg_overlap_mentioned_p (value, addr);
+ }
+ 
++/* Return nonzero if the CONSUMER instruction (a load) does need
++   a Pmode PRODUCER's value to calculate the address.  */
++
++int
++arm_early_load_addr_dep_ptr (rtx producer, rtx consumer)
++{
++  rtx value = arm_find_sub_rtx_with_code (PATTERN (producer), SET, false);
++  rtx addr = arm_find_sub_rtx_with_code (PATTERN (consumer), SET, false);
++
++  if (!value || !addr || !MEM_P (SET_SRC (value)))
++    return 0;
++
++  value = SET_DEST (value);
++  addr = SET_SRC (addr);
++
++  return GET_MODE (value) == Pmode && reg_overlap_mentioned_p (value, addr);
++}
++
+ /* Return nonzero if the CONSUMER instruction (an ALU op) does not
+    have an early register shift value or amount dependency on the
+    result of PRODUCER.  */
+@@ -336,6 +354,24 @@ arm_early_store_addr_dep (rtx producer, rtx consumer)
+   return !arm_no_early_store_addr_dep (producer, consumer);
+ }
+ 
++/* Return nonzero if the CONSUMER instruction (a store) does need
++   a Pmode PRODUCER's value to calculate the address.  */
++
++int
++arm_early_store_addr_dep_ptr (rtx producer, rtx consumer)
++{
++  rtx value = arm_find_sub_rtx_with_code (PATTERN (producer), SET, false);
++  rtx addr = arm_find_sub_rtx_with_code (PATTERN (consumer), SET, false);
++
++  if (!value || !addr || !MEM_P (SET_SRC (value)))
++    return 0;
++
++  value = SET_DEST (value);
++  addr = SET_DEST (addr);
++
++  return GET_MODE (value) == Pmode && reg_overlap_mentioned_p (value, addr);
++}
++
+ /* Return non-zero iff the consumer (a multiply-accumulate or a
+    multiple-subtract instruction) has an accumulator dependency on the
+    result of the producer and no other dependency on that result.  It
+--- a/src/gcc/config/arm/aarch-cost-tables.h
++++ b/src/gcc/config/arm/aarch-cost-tables.h
+@@ -154,7 +154,7 @@ const struct cpu_cost_table cortexa53_extra_costs =
+       COSTS_N_INSNS (1),	/* extend.  */
+       COSTS_N_INSNS (1),	/* add.  */
+       COSTS_N_INSNS (1),	/* extend_add.  */
+-      COSTS_N_INSNS (7)		/* idiv.  */
++      COSTS_N_INSNS (9)		/* idiv.  */
+     },
+     /* MULT DImode */
+     {
+--- a/src/gcc/config/arm/arm-builtins.c
++++ b/src/gcc/config/arm/arm-builtins.c
+@@ -3058,15 +3058,15 @@ arm_expand_builtin (tree exp,
+     }
+ 
+   for (i = 0, d = bdesc_2arg; i < ARRAY_SIZE (bdesc_2arg); i++, d++)
+-    if (d->code == (const enum arm_builtins) fcode)
++    if (d->code == (enum arm_builtins) fcode)
+       return arm_expand_binop_builtin (d->icode, exp, target);
+ 
+   for (i = 0, d = bdesc_1arg; i < ARRAY_SIZE (bdesc_1arg); i++, d++)
+-    if (d->code == (const enum arm_builtins) fcode)
++    if (d->code == (enum arm_builtins) fcode)
+       return arm_expand_unop_builtin (d->icode, exp, target, 0);
+ 
+   for (i = 0, d = bdesc_3arg; i < ARRAY_SIZE (bdesc_3arg); i++, d++)
+-    if (d->code == (const enum arm_builtins) fcode)
++    if (d->code == (enum arm_builtins) fcode)
+       return arm_expand_ternop_builtin (d->icode, exp, target);
+ 
+   /* @@@ Should really do something sensible here.  */
 --- a/src/gcc/config/arm/arm.c
 +++ b/src/gcc/config/arm/arm.c
-@@ -28236,17 +28236,32 @@ arm_expand_compare_and_swap (rtx operand
+@@ -85,6 +85,7 @@ static bool arm_const_not_ok_for_debug_p (rtx);
+ static int arm_needs_doubleword_align (machine_mode, const_tree);
+ static int arm_compute_static_chain_stack_bytes (void);
+ static arm_stack_offsets *arm_get_frame_offsets (void);
++static void arm_compute_frame_layout (void);
+ static void arm_add_gc_roots (void);
+ static int arm_gen_constant (enum rtx_code, machine_mode, rtx,
+ 			     unsigned HOST_WIDE_INT, rtx, rtx, int, int);
+@@ -680,6 +681,9 @@ static const struct attribute_spec arm_attribute_table[] =
+ #undef TARGET_SCALAR_MODE_SUPPORTED_P
+ #define TARGET_SCALAR_MODE_SUPPORTED_P arm_scalar_mode_supported_p
+ 
++#undef TARGET_COMPUTE_FRAME_LAYOUT
++#define TARGET_COMPUTE_FRAME_LAYOUT arm_compute_frame_layout
++
+ #undef TARGET_FRAME_POINTER_REQUIRED
+ #define TARGET_FRAME_POINTER_REQUIRED arm_frame_pointer_required
+ 
+@@ -4009,6 +4013,10 @@ use_simple_return_p (void)
+ {
+   arm_stack_offsets *offsets;
+ 
++  /* Note this function can be called before or after reload.  */
++  if (!reload_completed)
++    arm_compute_frame_layout ();
++
+   offsets = arm_get_frame_offsets ();
+   return offsets->outgoing_args != 0;
+ }
+@@ -9285,6 +9293,10 @@ arm_rtx_costs_internal (rtx x, enum rtx_code code, enum rtx_code outer_code,
+ 	*cost += COSTS_N_INSNS (speed_p ? extra_cost->mult[0].idiv : 0);
+       else
+ 	*cost = LIBCALL_COST (2);
++
++      /* Make the cost of sdiv more expensive so when both sdiv and udiv are
++	 possible udiv is prefered.  */
++      *cost += (code == DIV ? COSTS_N_INSNS (1) : 0);
+       return false;	/* All arguments must be in registers.  */
+ 
+     case MOD:
+@@ -9307,7 +9319,9 @@ arm_rtx_costs_internal (rtx x, enum rtx_code code, enum rtx_code outer_code,
+ 
+     /* Fall-through.  */
+     case UMOD:
+-      *cost = LIBCALL_COST (2);
++      /* Make the cost of sdiv more expensive so when both sdiv and udiv are
++	 possible udiv is prefered.  */
++      *cost = LIBCALL_COST (2) + (code == MOD ? COSTS_N_INSNS (1) : 0);
+       return false;	/* All arguments must be in registers.  */
+ 
+     case ROTATE:
+@@ -16857,9 +16871,10 @@ compute_not_to_clear_mask (tree arg_type, rtx arg_rtx, int regno,
+   return not_to_clear_mask;
+ }
+ 
+-/* Saves callee saved registers, clears callee saved registers and caller saved
+-   registers not used to pass arguments before a cmse_nonsecure_call.  And
+-   restores the callee saved registers after.  */
++/* Clears caller saved registers not used to pass arguments before a
++   cmse_nonsecure_call.  Saving, clearing and restoring of callee saved
++   registers is done in __gnu_cmse_nonsecure_call libcall.
++   See libgcc/config/arm/cmse_nonsecure_call.S.  */
+ 
+ static void
+ cmse_nonsecure_call_clear_caller_saved (void)
+@@ -19094,7 +19109,7 @@ arm_compute_static_chain_stack_bytes (void)
+ 
+ /* Compute a bit mask of which registers need to be
+    saved on the stack for the current function.
+-   This is used by arm_get_frame_offsets, which may add extra registers.  */
++   This is used by arm_compute_frame_layout, which may add extra registers.  */
+ 
+ static unsigned long
+ arm_compute_save_reg_mask (void)
+@@ -20728,12 +20743,25 @@ any_sibcall_could_use_r3 (void)
+   alignment.  */
+ 
+ 
++/* Return cached stack offsets.  */
++
++static arm_stack_offsets *
++arm_get_frame_offsets (void)
++{
++  struct arm_stack_offsets *offsets;
++
++  offsets = &cfun->machine->stack_offsets;
++
++  return offsets;
++}
++
++
+ /* Calculate stack offsets.  These are used to calculate register elimination
+    offsets and in prologue/epilogue code.  Also calculates which registers
+    should be saved.  */
+ 
+-static arm_stack_offsets *
+-arm_get_frame_offsets (void)
++static void
++arm_compute_frame_layout (void)
+ {
+   struct arm_stack_offsets *offsets;
+   unsigned long func_type;
+@@ -20744,9 +20772,6 @@ arm_get_frame_offsets (void)
+ 
+   offsets = &cfun->machine->stack_offsets;
+ 
+-  if (reload_completed)
+-    return offsets;
+-
+   /* Initially this is the size of the local variables.  It will translated
+      into an offset once we have determined the size of preceding data.  */
+   frame_size = ROUND_UP_WORD (get_frame_size ());
+@@ -20811,7 +20836,7 @@ arm_get_frame_offsets (void)
+     {
+       offsets->outgoing_args = offsets->soft_frame;
+       offsets->locals_base = offsets->soft_frame;
+-      return offsets;
++      return;
+     }
+ 
+   /* Ensure SFP has the correct alignment.  */
+@@ -20887,8 +20912,6 @@ arm_get_frame_offsets (void)
+ 	offsets->outgoing_args += 4;
+       gcc_assert (!(offsets->outgoing_args & 7));
+     }
+-
+-  return offsets;
+ }
+ 
+ 
+@@ -21522,7 +21545,7 @@ arm_expand_prologue (void)
+ 	{
+ 	  /* If no coprocessor registers are being pushed and we don't have
+ 	     to worry about a frame pointer then push extra registers to
+-	     create the stack frame.  This is done is a way that does not
++	     create the stack frame.  This is done in a way that does not
+ 	     alter the frame layout, so is independent of the epilogue.  */
+ 	  int n;
+ 	  int frame;
+@@ -28225,17 +28248,32 @@ arm_expand_compare_and_swap (rtx operands[])
        gcc_unreachable ();
      }
  
@@ -219,8 +1535,108 @@ Index: b/src/gcc/config/arm/arm.c
    emit_insn (gen (bdst, rval, mem, oldval, newval, is_weak, mod_s, mod_f));
  
    if (mode == QImode || mode == HImode)
-Index: b/src/gcc/config/arm/iterators.md
-===================================================================
+--- a/src/gcc/config/arm/arm.h
++++ b/src/gcc/config/arm/arm.h
+@@ -682,7 +682,7 @@ extern int arm_arch_cmse;
+ /* Standard register usage.  */
+ 
+ /* Register allocation in ARM Procedure Call Standard
+-   (S - saved over call).
++   (S - saved over call, F - Frame-related).
+ 
+ 	r0	   *	argument word/integer result
+ 	r1-r3		argument word
+--- a/src/gcc/config/arm/arm_neon.h
++++ b/src/gcc/config/arm/arm_neon.h
+@@ -17069,14 +17069,22 @@ __extension__ extern __inline float16x4_t
+ __attribute__  ((__always_inline__, __gnu_inline__, __artificial__))
+ vadd_f16 (float16x4_t __a, float16x4_t __b)
+ {
++#ifdef __FAST_MATH__
++  return __a + __b;
++#else
+   return __builtin_neon_vaddv4hf (__a, __b);
++#endif
+ }
+ 
+ __extension__ extern __inline float16x8_t
+ __attribute__  ((__always_inline__, __gnu_inline__, __artificial__))
+ vaddq_f16 (float16x8_t __a, float16x8_t __b)
+ {
++#ifdef __FAST_MATH__
++  return __a + __b;
++#else
+   return __builtin_neon_vaddv8hf (__a, __b);
++#endif
+ }
+ 
+ __extension__ extern __inline uint16x4_t
+@@ -17587,7 +17595,11 @@ __extension__ extern __inline float16x4_t
+ __attribute__  ((__always_inline__, __gnu_inline__, __artificial__))
+ vmul_f16 (float16x4_t __a, float16x4_t __b)
+ {
++#ifdef __FAST_MATH__
++  return __a * __b;
++#else
+   return __builtin_neon_vmulfv4hf (__a, __b);
++#endif
+ }
+ 
+ __extension__ extern __inline float16x4_t
+@@ -17608,7 +17620,11 @@ __extension__ extern __inline float16x8_t
+ __attribute__  ((__always_inline__, __gnu_inline__, __artificial__))
+ vmulq_f16 (float16x8_t __a, float16x8_t __b)
+ {
++#ifdef __FAST_MATH__
++  return __a * __b;
++#else
+   return __builtin_neon_vmulfv8hf (__a, __b);
++#endif
+ }
+ 
+ __extension__ extern __inline float16x8_t
+@@ -17804,14 +17820,22 @@ __extension__ extern __inline float16x4_t
+ __attribute__  ((__always_inline__, __gnu_inline__, __artificial__))
+ vsub_f16 (float16x4_t __a, float16x4_t __b)
+ {
++#ifdef __FAST_MATH__
++  return __a - __b;
++#else
+   return __builtin_neon_vsubv4hf (__a, __b);
++#endif
+ }
+ 
+ __extension__ extern __inline float16x8_t
+ __attribute__  ((__always_inline__, __gnu_inline__, __artificial__))
+ vsubq_f16 (float16x8_t __a, float16x8_t __b)
+ {
++#ifdef __FAST_MATH__
++  return __a - __b;
++#else
+   return __builtin_neon_vsubv8hf (__a, __b);
++#endif
+ }
+ 
+ #endif /* __ARM_FEATURE_VECTOR_FP16_ARITHMETIC.  */
+--- a/src/gcc/config/arm/cortex-a53.md
++++ b/src/gcc/config/arm/cortex-a53.md
+@@ -254,6 +254,16 @@
+ 		 "cortex_a53_store*"
+ 		 "arm_no_early_store_addr_dep")
+ 
++;; Model a bypass for load to load/store address.
++
++(define_bypass 3 "cortex_a53_load1"
++		 "cortex_a53_load*"
++		 "arm_early_load_addr_dep_ptr")
++
++(define_bypass 3 "cortex_a53_load1"
++		 "cortex_a53_store*"
++		 "arm_early_store_addr_dep_ptr")
++
+ ;; Model a GP->FP register move as similar to stores.
+ 
+ (define_bypass 0 "cortex_a53_alu*,cortex_a53_shift*"
 --- a/src/gcc/config/arm/iterators.md
 +++ b/src/gcc/config/arm/iterators.md
 @@ -45,6 +45,9 @@
@@ -244,8 +1660,88 @@ Index: b/src/gcc/config/arm/iterators.md
  ;; Determine element size suffix from vector mode.
  (define_mode_attr MMX_char [(V8QI "b") (V4HI "h") (V2SI "w") (DI "d")])
  
-Index: b/src/gcc/config/arm/sync.md
-===================================================================
+--- a/src/gcc/config/arm/neon.md
++++ b/src/gcc/config/arm/neon.md
+@@ -505,6 +505,23 @@
+                     (const_string "neon_add<q>")))]
+ )
+ 
++;; As with SFmode, full support for HFmode vector arithmetic is only available
++;; when flag-unsafe-math-optimizations is enabled.
++
++(define_insn "add<mode>3"
++  [(set
++    (match_operand:VH 0 "s_register_operand" "=w")
++    (plus:VH
++     (match_operand:VH 1 "s_register_operand" "w")
++     (match_operand:VH 2 "s_register_operand" "w")))]
++ "TARGET_NEON_FP16INST && flag_unsafe_math_optimizations"
++ "vadd.<V_if_elem>\t%<V_reg>0, %<V_reg>1, %<V_reg>2"
++ [(set (attr "type")
++   (if_then_else (match_test "<Is_float_mode>")
++    (const_string "neon_fp_addsub_s<q>")
++    (const_string "neon_add<q>")))]
++)
++
+ (define_insn "add<mode>3_fp16"
+   [(set
+     (match_operand:VH 0 "s_register_operand" "=w")
+@@ -557,6 +574,17 @@
+                     (const_string "neon_sub<q>")))]
+ )
+ 
++(define_insn "sub<mode>3"
++ [(set
++   (match_operand:VH 0 "s_register_operand" "=w")
++   (minus:VH
++    (match_operand:VH 1 "s_register_operand" "w")
++    (match_operand:VH 2 "s_register_operand" "w")))]
++ "TARGET_NEON_FP16INST && flag_unsafe_math_optimizations"
++ "vsub.<V_if_elem>\t%<V_reg>0, %<V_reg>1, %<V_reg>2"
++ [(set_attr "type" "neon_sub<q>")]
++)
++
+ (define_insn "sub<mode>3_fp16"
+  [(set
+    (match_operand:VH 0 "s_register_operand" "=w")
+@@ -664,8 +692,17 @@
+   [(set_attr "type" "neon_fp_mla_s<q>")]
+ )
+ 
+-;; There is limited support for unsafe-math optimizations using the NEON FP16
+-;; arithmetic instructions, so only the intrinsic is currently supported.
++(define_insn "fma<VH:mode>4"
++ [(set (match_operand:VH 0 "register_operand" "=w")
++   (fma:VH
++    (match_operand:VH 1 "register_operand" "w")
++    (match_operand:VH 2 "register_operand" "w")
++    (match_operand:VH 3 "register_operand" "0")))]
++ "TARGET_NEON_FP16INST && flag_unsafe_math_optimizations"
++ "vfma.<V_if_elem>\\t%<V_reg>0, %<V_reg>1, %<V_reg>2"
++ [(set_attr "type" "neon_fp_mla_s<q>")]
++)
++
+ (define_insn "fma<VH:mode>4_intrinsic"
+  [(set (match_operand:VH 0 "register_operand" "=w")
+    (fma:VH
+@@ -2175,6 +2212,17 @@
+                     (const_string "neon_mul_<V_elem_ch><q>")))]
+ )
+ 
++(define_insn "mul<mode>3"
++ [(set
++   (match_operand:VH 0 "s_register_operand" "=w")
++   (mult:VH
++    (match_operand:VH 1 "s_register_operand" "w")
++    (match_operand:VH 2 "s_register_operand" "w")))]
++  "TARGET_NEON_FP16INST && flag_unsafe_math_optimizations"
++  "vmul.f16\t%<V_reg>0, %<V_reg>1, %<V_reg>2"
++ [(set_attr "type" "neon_mul_<VH_elem_ch><q>")]
++)
++
+ (define_insn "neon_vmulf<mode>"
+  [(set
+    (match_operand:VH 0 "s_register_operand" "=w")
 --- a/src/gcc/config/arm/sync.md
 +++ b/src/gcc/config/arm/sync.md
 @@ -191,9 +191,9 @@
@@ -274,8 +1770,6 @@ Index: b/src/gcc/config/arm/sync.md
     (set (match_operand:SIDI 1 "s_register_operand" "=&r,&l,&0,&l*h")	;; val out
  	(match_operand:SIDI 2 "mem_noofs_operand" "+Ua,Ua,Ua,Ua"))	;; memory
     (set (match_dup 2)
-Index: b/src/gcc/config/arm/t-aprofile
-===================================================================
 --- a/src/gcc/config/arm/t-aprofile
 +++ b/src/gcc/config/arm/t-aprofile
 @@ -24,30 +24,13 @@
@@ -287,23 +1781,23 @@ Index: b/src/gcc/config/arm/t-aprofile
 -MULTILIB_EXCEPTIONS  =
 -MULTILIB_MATCHES     =
 -MULTILIB_REUSE	     =
--
++# Arch and FPU variants to build libraries with
+ 
 -# We have the following hierachy:
 -#   ISA: A32 (.) or T32 (thumb)
 -#   Architecture: ARMv7-A (v7-a), ARMv7VE (v7ve), or ARMv8-A (v8-a).
 -#   FPU: VFPv3-D16 (fpv3), NEONv1 (simdv1), VFPv4-D16 (fpv4),
 -#        NEON-VFPV4 (simdvfpv4), NEON for ARMv8 (simdv8), or None (.).
 -#   Float-abi: Soft (.), softfp (softfp), or hard (hardfp).
--
--MULTILIB_OPTIONS       += mthumb
--MULTILIB_DIRNAMES      += thumb
-+# Arch and FPU variants to build libraries with
- 
--MULTILIB_OPTIONS       += march=armv7-a/march=armv7ve/march=armv8-a
--MULTILIB_DIRNAMES      += v7-a v7ve v8-a
 +MULTI_ARCH_OPTS_A       = march=armv7-a/march=armv7ve/march=armv8-a
 +MULTI_ARCH_DIRS_A       = v7-a v7ve v8-a
  
+-MULTILIB_OPTIONS       += mthumb
+-MULTILIB_DIRNAMES      += thumb
+-
+-MULTILIB_OPTIONS       += march=armv7-a/march=armv7ve/march=armv8-a
+-MULTILIB_DIRNAMES      += v7-a v7ve v8-a
+-
 -MULTILIB_OPTIONS       += mfpu=vfpv3-d16/mfpu=neon/mfpu=vfpv4-d16/mfpu=neon-vfpv4/mfpu=neon-fp-armv8
 -MULTILIB_DIRNAMES      += fpv3 simdv1 fpv4 simdvfpv4 simdv8
 -
@@ -326,8 +1820,6 @@ Index: b/src/gcc/config/arm/t-aprofile
  MULTILIB_MATCHES       += march?armv7-a=mcpu?cortex-a8
  MULTILIB_MATCHES       += march?armv7-a=mcpu?cortex-a9
  MULTILIB_MATCHES       += march?armv7-a=mcpu?cortex-a5
-Index: b/src/gcc/config/arm/t-multilib
-===================================================================
 --- /dev/null
 +++ b/src/gcc/config/arm/t-multilib
 @@ -0,0 +1,69 @@
@@ -400,8 +1892,6 @@ Index: b/src/gcc/config/arm/t-multilib
 +
 +MULTILIB_OPTIONS       += mfloat-abi=softfp/mfloat-abi=hard
 +MULTILIB_DIRNAMES      += softfp hard
-Index: b/src/gcc/config/arm/t-rmprofile
-===================================================================
 --- a/src/gcc/config/arm/t-rmprofile
 +++ b/src/gcc/config/arm/t-rmprofile
 @@ -24,33 +24,14 @@
@@ -413,7 +1903,7 @@ Index: b/src/gcc/config/arm/t-rmprofile
 -MULTILIB_EXCEPTIONS  =
 -MULTILIB_MATCHES     =
 -MULTILIB_REUSE       =
--
+ 
 -# We have the following hierachy:
 -#   ISA: A32 (.) or T16/T32 (thumb).
 -#   Architecture: ARMv6S-M (v6-m), ARMv7-M (v7-m), ARMv7E-M (v7e-m),
@@ -421,21 +1911,21 @@ Index: b/src/gcc/config/arm/t-rmprofile
 -#   FPU: VFPv3-D16 (fpv3), FPV4-SP-D16 (fpv4-sp), FPV5-SP-D16 (fpv5-sp),
 -#        VFPv5-D16 (fpv5), or None (.).
 -#   Float-abi: Soft (.), softfp (softfp), or hard (hardfp).
--
--# Options to build libraries with
--
--MULTILIB_OPTIONS       += mthumb
--MULTILIB_DIRNAMES      += thumb
- 
--MULTILIB_OPTIONS       += march=armv6s-m/march=armv7-m/march=armv7e-m/march=armv7/march=armv8-m.base/march=armv8-m.main
--MULTILIB_DIRNAMES      += v6-m v7-m v7e-m v7-ar v8-m.base v8-m.main
 +# Arch and FPU variants to build libraries with
  
--MULTILIB_OPTIONS       += mfpu=vfpv3-d16/mfpu=fpv4-sp-d16/mfpu=fpv5-sp-d16/mfpu=fpv5-d16
--MULTILIB_DIRNAMES      += fpv3 fpv4-sp fpv5-sp fpv5
+-# Options to build libraries with
 +MULTI_ARCH_OPTS_RM      = march=armv6s-m/march=armv7-m/march=armv7e-m/march=armv7/march=armv8-m.base/march=armv8-m.main
 +MULTI_ARCH_DIRS_RM      = v6-m v7-m v7e-m v7-ar v8-m.base v8-m.main
  
+-MULTILIB_OPTIONS       += mthumb
+-MULTILIB_DIRNAMES      += thumb
+-
+-MULTILIB_OPTIONS       += march=armv6s-m/march=armv7-m/march=armv7e-m/march=armv7/march=armv8-m.base/march=armv8-m.main
+-MULTILIB_DIRNAMES      += v6-m v7-m v7e-m v7-ar v8-m.base v8-m.main
+-
+-MULTILIB_OPTIONS       += mfpu=vfpv3-d16/mfpu=fpv4-sp-d16/mfpu=fpv5-sp-d16/mfpu=fpv5-d16
+-MULTILIB_DIRNAMES      += fpv3 fpv4-sp fpv5-sp fpv5
+-
 -MULTILIB_OPTIONS       += mfloat-abi=softfp/mfloat-abi=hard
 -MULTILIB_DIRNAMES      += softfp hard
 +MULTI_FPU_OPTS_RM       = mfpu=vfpv3-d16/mfpu=fpv4-sp-d16/mfpu=fpv5-sp-d16/mfpu=fpv5-d16
@@ -443,8 +1933,6 @@ Index: b/src/gcc/config/arm/t-rmprofile
  
  
  # Option combinations to build library with
-Index: b/src/gcc/configure
-===================================================================
 --- a/src/gcc/configure
 +++ b/src/gcc/configure
 @@ -1717,7 +1717,8 @@ Optional Packages:
@@ -457,7 +1945,7 @@ Index: b/src/gcc/configure
    --with-bugurl=URL       Direct users to URL to report a bug
    --with-multilib-list    select multilibs (AArch64, SH and x86-64 only)
    --with-gnu-ld           assume the C compiler uses GNU ld default=no
-@@ -7637,7 +7638,7 @@ if test "${with_pkgversion+set}" = set;
+@@ -7637,7 +7638,7 @@ if test "${with_pkgversion+set}" = set; then :
        *)   PKGVERSION="($withval) " ;;
       esac
  else
@@ -484,11 +1972,20 @@ Index: b/src/gcc/configure
  #include "confdefs.h"
  
  #if HAVE_DLFCN_H
-Index: b/src/gcc/cppbuiltin.c
-===================================================================
+--- a/src/gcc/configure.ac
++++ b/src/gcc/configure.ac
+@@ -929,7 +929,7 @@ AC_ARG_WITH(specs,
+ )
+ AC_SUBST(CONFIGURE_SPECS)
+ 
+-ACX_PKGVERSION([GCC])
++ACX_PKGVERSION([Linaro GCC `cat $srcdir/LINARO-VERSION`])
+ ACX_BUGURL([https://gcc.gnu.org/bugs/])
+ 
+ # Sanity check enable_languages in case someone does not run the toplevel
 --- a/src/gcc/cppbuiltin.c
 +++ b/src/gcc/cppbuiltin.c
-@@ -53,18 +53,41 @@ parse_basever (int *major, int *minor, i
+@@ -53,18 +53,41 @@ parse_basever (int *major, int *minor, int *patchlevel)
      *patchlevel = s_patchlevel;
  }
  
@@ -531,11 +2028,194 @@ Index: b/src/gcc/cppbuiltin.c
    cpp_define_formatted (pfile, "__ATOMIC_RELAXED=%d", MEMMODEL_RELAXED);
    cpp_define_formatted (pfile, "__ATOMIC_SEQ_CST=%d", MEMMODEL_SEQ_CST);
    cpp_define_formatted (pfile, "__ATOMIC_ACQUIRE=%d", MEMMODEL_ACQUIRE);
-Index: b/src/gcc/simplify-rtx.c
-===================================================================
+--- a/src/gcc/dbgcnt.def
++++ b/src/gcc/dbgcnt.def
+@@ -174,6 +174,7 @@ DEBUG_COUNTER (merged_ipa_icf)
+ DEBUG_COUNTER (postreload_cse)
+ DEBUG_COUNTER (pre)
+ DEBUG_COUNTER (pre_insn)
++DEBUG_COUNTER (prefetch)
+ DEBUG_COUNTER (registered_jump_thread)
+ DEBUG_COUNTER (sched2_func)
+ DEBUG_COUNTER (sched_block)
+--- a/src/gcc/expr.c
++++ b/src/gcc/expr.c
+@@ -8838,6 +8838,15 @@ expand_expr_real_2 (sepops ops, rtx target, machine_mode tmode,
+ 	   end_sequence ();
+ 	   unsigned uns_cost = seq_cost (uns_insns, speed_p);
+ 	   unsigned sgn_cost = seq_cost (sgn_insns, speed_p);
++
++	   /* If costs are the same then use as tie breaker the other
++	      other factor.  */
++	   if (uns_cost == sgn_cost)
++	     {
++		uns_cost = seq_cost (uns_insns, !speed_p);
++		sgn_cost = seq_cost (sgn_insns, !speed_p);
++	     }
++
+ 	   if (uns_cost < sgn_cost || (uns_cost == sgn_cost && unsignedp))
+ 	     {
+ 	       emit_insn (uns_insns);
+--- a/src/gcc/gimple-fold.c
++++ b/src/gcc/gimple-fold.c
+@@ -3252,6 +3252,28 @@ gimple_fold_builtin_acc_on_device (gimple_stmt_iterator *gsi, tree arg0)
+   return true;
+ }
+ 
++/* Fold realloc (0, n) -> malloc (n).  */
++
++static bool
++gimple_fold_builtin_realloc (gimple_stmt_iterator *gsi)
++{
++  gimple *stmt = gsi_stmt (*gsi);
++  tree arg = gimple_call_arg (stmt, 0);
++  tree size = gimple_call_arg (stmt, 1);
++
++  if (operand_equal_p (arg, null_pointer_node, 0))
++    {
++      tree fn_malloc = builtin_decl_implicit (BUILT_IN_MALLOC);
++      if (fn_malloc)
++	{
++	  gcall *repl = gimple_build_call (fn_malloc, 1, size);
++	  replace_call_with_call_and_fold (gsi, repl);
++	  return true;
++	}
++    }
++  return false;
++}
++
+ /* Fold the non-target builtin at *GSI and return whether any simplification
+    was made.  */
+ 
+@@ -3410,6 +3432,9 @@ gimple_fold_builtin (gimple_stmt_iterator *gsi)
+     case BUILT_IN_ACC_ON_DEVICE:
+       return gimple_fold_builtin_acc_on_device (gsi,
+ 						gimple_call_arg (stmt, 0));
++    case BUILT_IN_REALLOC:
++      return gimple_fold_builtin_realloc (gsi);
++
+     default:;
+     }
+ 
+--- a/src/gcc/lra-constraints.c
++++ b/src/gcc/lra-constraints.c
+@@ -5394,6 +5394,29 @@ choose_split_class (enum reg_class allocno_class,
+ #endif
+ }
+ 
++/* Copy any equivalence information from ORIGINAL_REGNO to NEW_REGNO.
++   It only makes sense to call this function if NEW_REGNO is always
++   equal to ORIGINAL_REGNO.  */
++
++static void
++lra_copy_reg_equiv (unsigned int new_regno, unsigned int original_regno)
++{
++  if (!ira_reg_equiv[original_regno].defined_p)
++    return;
++
++  ira_expand_reg_equiv ();
++  ira_reg_equiv[new_regno].defined_p = true;
++  if (ira_reg_equiv[original_regno].memory)
++    ira_reg_equiv[new_regno].memory
++      = copy_rtx (ira_reg_equiv[original_regno].memory);
++  if (ira_reg_equiv[original_regno].constant)
++    ira_reg_equiv[new_regno].constant
++      = copy_rtx (ira_reg_equiv[original_regno].constant);
++  if (ira_reg_equiv[original_regno].invariant)
++    ira_reg_equiv[new_regno].invariant
++      = copy_rtx (ira_reg_equiv[original_regno].invariant);
++}
++
+ /* Do split transformations for insn INSN, which defines or uses
+    ORIGINAL_REGNO.  NEXT_USAGE_INSNS specifies which instruction in
+    the EBB next uses ORIGINAL_REGNO; it has the same form as the
+@@ -5515,6 +5538,7 @@ split_reg (bool before_p, int original_regno, rtx_insn *insn,
+       new_reg = lra_create_new_reg (mode, original_reg, rclass, "split");
+       reg_renumber[REGNO (new_reg)] = hard_regno;
+     }
++  int new_regno = REGNO (new_reg);
+   save = emit_spill_move (true, new_reg, original_reg);
+   if (NEXT_INSN (save) != NULL_RTX && !call_save_p)
+     {
+@@ -5523,7 +5547,7 @@ split_reg (bool before_p, int original_regno, rtx_insn *insn,
+ 	  fprintf
+ 	    (lra_dump_file,
+ 	     "	  Rejecting split %d->%d resulting in > 2 save insns:\n",
+-	     original_regno, REGNO (new_reg));
++	     original_regno, new_regno);
+ 	  dump_rtl_slim (lra_dump_file, save, NULL, -1, 0);
+ 	  fprintf (lra_dump_file,
+ 		   "	))))))))))))))))))))))))))))))))))))))))))))))))\n");
+@@ -5538,18 +5562,24 @@ split_reg (bool before_p, int original_regno, rtx_insn *insn,
+ 	  fprintf (lra_dump_file,
+ 		   "	Rejecting split %d->%d "
+ 		   "resulting in > 2 restore insns:\n",
+-		   original_regno, REGNO (new_reg));
++		   original_regno, new_regno);
+ 	  dump_rtl_slim (lra_dump_file, restore, NULL, -1, 0);
+ 	  fprintf (lra_dump_file,
+ 		   "	))))))))))))))))))))))))))))))))))))))))))))))))\n");
+ 	}
+       return false;
+     }
++  /* Transfer equivalence information to the spill register, so that
++     if we fail to allocate the spill register, we have the option of
++     rematerializing the original value instead of spilling to the stack.  */
++  if (!HARD_REGISTER_NUM_P (original_regno)
++      && mode == PSEUDO_REGNO_MODE (original_regno))
++    lra_copy_reg_equiv (new_regno, original_regno);
+   after_p = usage_insns[original_regno].after_p;
+-  lra_reg_info[REGNO (new_reg)].restore_rtx = regno_reg_rtx[original_regno];
+-  bitmap_set_bit (&check_only_regs, REGNO (new_reg));
++  lra_reg_info[new_regno].restore_rtx = regno_reg_rtx[original_regno];
++  bitmap_set_bit (&check_only_regs, new_regno);
+   bitmap_set_bit (&check_only_regs, original_regno);
+-  bitmap_set_bit (&lra_split_regs, REGNO (new_reg));
++  bitmap_set_bit (&lra_split_regs, new_regno);
+   for (;;)
+     {
+       if (GET_CODE (next_usage_insns) != INSN_LIST)
+@@ -5565,7 +5595,7 @@ split_reg (bool before_p, int original_regno, rtx_insn *insn,
+       if (lra_dump_file != NULL)
+ 	{
+ 	  fprintf (lra_dump_file, "    Split reuse change %d->%d:\n",
+-		   original_regno, REGNO (new_reg));
++		   original_regno, new_regno);
+ 	  dump_insn_slim (lra_dump_file, as_a <rtx_insn *> (usage_insn));
+ 	}
+     }
+--- a/src/gcc/lra-eliminations.c
++++ b/src/gcc/lra-eliminations.c
+@@ -1196,6 +1196,8 @@ update_reg_eliminate (bitmap insns_with_changed_offsets)
+   struct lra_elim_table *ep, *ep1;
+   HARD_REG_SET temp_hard_reg_set;
+ 
++  targetm.compute_frame_layout ();
++
+   /* Clear self elimination offsets.  */
+   for (ep = reg_eliminate; ep < &reg_eliminate[NUM_ELIMINABLE_REGS]; ep++)
+     self_elim_offsets[ep->from] = 0;
+--- a/src/gcc/reload1.c
++++ b/src/gcc/reload1.c
+@@ -3821,6 +3821,7 @@ verify_initial_elim_offsets (void)
+   if (!num_eliminable)
+     return true;
+ 
++  targetm.compute_frame_layout ();
+   for (ep = reg_eliminate; ep < &reg_eliminate[NUM_ELIMINABLE_REGS]; ep++)
+     {
+       INITIAL_ELIMINATION_OFFSET (ep->from, ep->to, t);
+@@ -3838,6 +3839,7 @@ set_initial_elim_offsets (void)
+ {
+   struct elim_table *ep = reg_eliminate;
+ 
++  targetm.compute_frame_layout ();
+   for (; ep < &reg_eliminate[NUM_ELIMINABLE_REGS]; ep++)
+     {
+       INITIAL_ELIMINATION_OFFSET (ep->from, ep->to, ep->initial_offset);
 --- a/src/gcc/simplify-rtx.c
 +++ b/src/gcc/simplify-rtx.c
-@@ -3345,19 +3345,21 @@ simplify_binary_operation_1 (enum rtx_co
+@@ -3345,19 +3345,21 @@ simplify_binary_operation_1 (enum rtx_code code, machine_mode mode,
  	  && UINTVAL (trueop0) == GET_MODE_MASK (mode)
  	  && ! side_effects_p (op1))
  	return op0;
@@ -560,7 +2240,7 @@ Index: b/src/gcc/simplify-rtx.c
  	  && !VECTOR_MODE_P (mode)
  	  && SUBREG_P (op0)
  	  && CONST_INT_P (op1)
-@@ -3374,13 +3376,13 @@ simplify_binary_operation_1 (enum rtx_co
+@@ -3374,13 +3376,13 @@ simplify_binary_operation_1 (enum rtx_code code, machine_mode mode,
  	  rtx tmp = GEN_INT (INTVAL (XEXP (SUBREG_REG (op0), 1))
  			     + INTVAL (op1));
  	  machine_mode inner_mode = GET_MODE (SUBREG_REG (op0));
@@ -576,8 +2256,44 @@ Index: b/src/gcc/simplify-rtx.c
        if (SHIFT_COUNT_TRUNCATED && CONST_INT_P (op1))
  	{
  	  val = INTVAL (op1) & (GET_MODE_PRECISION (mode) - 1);
-Index: b/src/gcc/testsuite/gcc.c-torture/execute/pr78622.c
-===================================================================
+--- a/src/gcc/target.def
++++ b/src/gcc/target.def
+@@ -5395,6 +5395,18 @@ five otherwise.  This is best for most machines.",
+  unsigned int, (void),
+  default_case_values_threshold)
+ 
++/* Optional callback to advise the target to compute the frame layout.  */
++DEFHOOK
++(compute_frame_layout,
++ "This target hook is called once each time the frame layout needs to be\n\
++recalculated.  The calculations can be cached by the target and can then\n\
++be used by @code{INITIAL_ELIMINATION_OFFSET} instead of re-computing the\n\
++layout on every invocation of that hook.  This is particularly useful\n\
++for targets that have an expensive frame layout function.  Implementing\n\
++this callback is optional.",
++ void, (void),
++ hook_void_void)
++
+ /* Return true if a function must have and use a frame pointer.  */
+ DEFHOOK
+ (frame_pointer_required,
+--- a/src/gcc/testsuite/g++.dg/other/i386-9.C
++++ b/src/gcc/testsuite/g++.dg/other/i386-9.C
+@@ -2,6 +2,7 @@
+ // Testcase by Zdenek Sojka <zsojka@seznam.cz>
+ 
+ // { dg-do run { target i?86-*-* x86_64-*-* } }
++/* { dg-require-stack-check "" } */
+ // { dg-options "-Os -mpreferred-stack-boundary=5 -fstack-check -fno-omit-frame-pointer" }
+ 
+ int main()
+--- /dev/null
++++ b/src/gcc/testsuite/gcc.c-torture/compile/stack-check-1.c
+@@ -0,0 +1,4 @@
++/* { dg-require-effective-target untyped_assembly } */
++/* { dg-require-stack-check "" } */
++/* { dg-additional-options "-fstack-check" } */
++#include "20031023-1.c"
 --- a/src/gcc/testsuite/gcc.c-torture/execute/pr78622.c
 +++ b/src/gcc/testsuite/gcc.c-torture/execute/pr78622.c
 @@ -1,6 +1,7 @@
@@ -588,8 +2304,13 @@ Index: b/src/gcc/testsuite/gcc.c-torture/execute/pr78622.c
     { dg-additional-options "-Wformat-overflow=2" } */
  
  __attribute__((noinline, noclone)) int
-Index: b/src/gcc/testsuite/gcc.dg/lsr-div1.c
-===================================================================
+--- a/src/gcc/testsuite/gcc.dg/graphite/run-id-pr47653.c
++++ b/src/gcc/testsuite/gcc.dg/graphite/run-id-pr47653.c
+@@ -1,3 +1,4 @@
++/* { dg-require-stack-check "generic" } */
+ /* { dg-options "-O -fstack-check=generic -ftree-pre -fgraphite-identity" } */
+ /* nvptx doesn't expose a stack.  */
+ /* { dg-skip-if "" { nvptx-*-* } { "*" } { "" } } */
 --- /dev/null
 +++ b/src/gcc/testsuite/gcc.dg/lsr-div1.c
 @@ -0,0 +1,57 @@
@@ -650,24 +2371,1865 @@ Index: b/src/gcc/testsuite/gcc.dg/lsr-div1.c
 +
 +/* { dg-final { scan-rtl-dump "\\(const_int 34 " "combine" { target aarch64*-*-* } } } */
 +
-Index: b/src/gcc/testsuite/gcc.target/arm/fpscr.c
-===================================================================
+--- a/src/gcc/testsuite/gcc.dg/pr47443.c
++++ b/src/gcc/testsuite/gcc.dg/pr47443.c
+@@ -1,5 +1,6 @@
+ /* PR tree-optimization/47443 */
+ /* { dg-do compile } */
++/* { dg-require-stack-check "generic" } */
+ /* { dg-options "-O -fstack-check=generic" } */
+ 
+ static inline int bar (char *c, int i)
+--- a/src/gcc/testsuite/gcc.dg/pr48134.c
++++ b/src/gcc/testsuite/gcc.dg/pr48134.c
+@@ -1,4 +1,5 @@
+ /* { dg-do compile } */
++/* { dg-require-stack-check "specific" } */
+ /* { dg-options "-O2 -fstack-check=specific -fno-tree-dse -fno-tree-fre -fno-tree-loop-optimize -g" } */
+ 
+ struct S
+--- a/src/gcc/testsuite/gcc.dg/pr70017.c
++++ b/src/gcc/testsuite/gcc.dg/pr70017.c
+@@ -1,4 +1,5 @@
+ /* { dg-do compile } */
++/* { dg-require-stack-check "generic" } */
+ /* { dg-options "-fstack-check=generic" } */
+ 
+ /* Check that the expected warning is issued for large frames.  */
 --- /dev/null
-+++ b/src/gcc/testsuite/gcc.target/arm/fpscr.c
-@@ -0,0 +1,16 @@
-+/* Test the fpscr builtins.  */
-+
++++ b/src/gcc/testsuite/gcc.dg/tree-ssa/pr79697.c
+@@ -0,0 +1,21 @@
 +/* { dg-do compile } */
-+/* { dg-require-effective-target arm_fp_ok } */
-+/* { dg-skip-if "need fp instructions" { *-*-* } { "-mfloat-abi=soft" } { "" } } */
-+/* { dg-add-options arm_fp } */
++/* { dg-options "-O2 -fdump-tree-gimple -fdump-tree-cddce-details -fdump-tree-optimized" } */
 +
-+void
-+test_fpscr ()
++void f(void)
 +{
-+  volatile unsigned int status = __builtin_arm_get_fpscr ();
-+  __builtin_arm_set_fpscr (status);
++  __builtin_strdup ("abc");
 +}
 +
-+/* { dg-final { scan-assembler "mrc\tp10, 7, r\[0-9\]+, cr1, cr0, 0" } } */
-+/* { dg-final { scan-assembler "mcr\tp10, 7, r\[0-9\]+, cr1, cr0, 0" } } */
++void g(void)
++{
++  __builtin_strndup ("abc", 3);
++}
++
++void h(void)
++{
++  __builtin_realloc (0, 10);
++}
++
++/* { dg-final { scan-tree-dump "Deleting : __builtin_strdup" "cddce1" } } */
++/* { dg-final { scan-tree-dump "Deleting : __builtin_strndup" "cddce1" } } */
++/* { dg-final { scan-tree-dump "__builtin_malloc" "gimple" } } */
+--- /dev/null
++++ b/src/gcc/testsuite/gcc.target/aarch64/atomic_cmp_exchange_zero_reg_1.c
+@@ -0,0 +1,12 @@
++/* { dg-do compile } */
++/* { dg-options "-O2" } */
++
++int
++foo (int *a)
++{
++  int x = 3;
++  return __atomic_compare_exchange_n (a, &x, 0, 1, __ATOMIC_ACQUIRE, __ATOMIC_ACQUIRE);
++}
++
++/* { dg-final { scan-assembler "stxr\\tw\[0-9\]+, wzr,.*" } } */
++/* { dg-final { scan-assembler-not "mov\\tw\[0-9\]+, 0" } } */
+--- /dev/null
++++ b/src/gcc/testsuite/gcc.target/aarch64/atomic_cmp_exchange_zero_strong_1.c
+@@ -0,0 +1,12 @@
++/* { dg-do compile } */
++/* { dg-options "-O2" } */
++
++int
++foo (int *a)
++{
++  int x = 0;
++  return __atomic_compare_exchange_n (a, &x, 4, 0,
++				      __ATOMIC_ACQUIRE, __ATOMIC_ACQUIRE);
++}
++
++/* { dg-final { scan-assembler-times "cbnz\\tw\[0-9\]+" 2 } } */
+--- /dev/null
++++ b/src/gcc/testsuite/gcc.target/aarch64/cmp_shifted_reg_1.c
+@@ -0,0 +1,11 @@
++/* { dg-do compile } */
++/* { dg-options "-O2 " } */
++
++int f3 (int x, int y)
++{
++  int res = x << 3;
++  return res != 0;
++}
++
++/* We should combine the shift and compare */
++/* { dg-final { scan-assembler "cmp\.*\twzr, w\[0-9\]+, lsl 3" } } */
+--- /dev/null
++++ b/src/gcc/testsuite/gcc.target/aarch64/hfmode_ins_1.c
+@@ -0,0 +1,21 @@
++/* { dg-do compile } */
++/* { dg-options "-O2" } */
++
++/* Check that we can perform this in a single INS without doing any DUPs.  */
++
++#include <arm_neon.h>
++
++float16x8_t
++foo (float16x8_t a, float16x8_t b)
++{
++  return vsetq_lane_f16 (vgetq_lane_f16 (b, 2), a, 3);
++}
++
++float16x4_t
++bar (float16x4_t a, float16x4_t b)
++{
++  return vset_lane_f16 (vget_lane_f16 (b, 2), a, 3);
++}
++
++/* { dg-final { scan-assembler-times "ins\\t" 2 } } */
++/* { dg-final { scan-assembler-not "dup\\t" } } */
+--- /dev/null
++++ b/src/gcc/testsuite/gcc.target/aarch64/prfm_imm_offset_1.c
+@@ -0,0 +1,18 @@
++/* { dg-do compile } */
++/* { dg-options "-O2" } */
++
++/* Check that we can generate the immediate-offset addressing
++   mode for PRFM.  */
++
++#define ARRSIZE 65
++int *bad_addr[ARRSIZE];
++
++void
++prefetch_for_read (void)
++{
++  int i;
++  for (i = 0; i < ARRSIZE; i++)
++    __builtin_prefetch (bad_addr[i] + 2, 0, 0);
++}
++
++/* { dg-final { scan-assembler-times "prfm.*\\\[x\[0-9\]+, 8\\\]" 1 } } */
+--- /dev/null
++++ b/src/gcc/testsuite/gcc.target/aarch64/sdiv_costs_1.c
+@@ -0,0 +1,38 @@
++/* { dg-do compile } */
++/* { dg-options "-O3" } */
++
++/* Both sdiv and udiv can be used here, so prefer udiv.  */
++int f1 (unsigned char *p)
++{
++  return 100 / p[1];
++}
++
++int f2 (unsigned char *p, unsigned short x)
++{
++  return x / p[0];
++}
++
++int f3 (unsigned char *p, int x)
++{
++  x &= 0x7fffffff;
++  return x / p[0];
++}
++
++int f5 (unsigned char *p, unsigned short x)
++{
++  return x % p[0];
++}
++
++/* This should only generate signed divisions.  */
++int f4 (unsigned char *p)
++{
++  return -100 / p[1];
++}
++
++int f6 (unsigned char *p, short x)
++{
++  return x % p[0];
++}
++
++/* { dg-final { scan-assembler-times "udiv\tw\[0-9\]+, w\[0-9\]+" 4 } } */
++/* { dg-final { scan-assembler-times "sdiv\tw\[0-9\]+, w\[0-9\]+" 2 } } */
+--- a/src/gcc/testsuite/gcc.target/aarch64/spellcheck_1.c
++++ b/src/gcc/testsuite/gcc.target/aarch64/spellcheck_1.c
+@@ -3,7 +3,7 @@
+ __attribute__((target ("arch=armv8-a-typo"))) void
+ foo ()
+ {
++  /* { dg-message "valid arguments are: \[^\n\r]*; did you mean 'armv8-a'?"  "" { target *-*-* } .-1 } */
++  /* { dg-error "unknown value 'armv8-a-typo' for 'arch' target attribute"  "" { target *-*-* } .-2 } */
++  /* { dg-error "target attribute 'arch=armv8-a-typo' is invalid"  "" { target *-*-* } .-3 } */
+ }
+-/* { dg-message "valid arguments are: \[^\n\r]*; did you mean 'armv8-a'?"  "" { target *-*-* } 5 } */
+-/* { dg-error "unknown value 'armv8-a-typo' for 'arch' target attribute"  "" { target *-*-* } 5 } */
+-/* { dg-error "target attribute 'arch=armv8-a-typo' is invalid"  "" { target *-*-* } 5 } */
+--- a/src/gcc/testsuite/gcc.target/aarch64/spellcheck_2.c
++++ b/src/gcc/testsuite/gcc.target/aarch64/spellcheck_2.c
+@@ -3,7 +3,7 @@
+ __attribute__((target ("cpu=cortex-a57-typo"))) void
+ foo ()
+ {
++  /* { dg-message "valid arguments are: \[^\n\r]*; did you mean 'cortex-a57?"  "" { target *-*-* } .-1 } */
++  /* { dg-error "unknown value 'cortex-a57-typo' for 'cpu' target attribute"  "" { target *-*-* } .-2 } */
++  /* { dg-error "target attribute 'cpu=cortex-a57-typo' is invalid"  "" { target *-*-* } .-3 } */
+ }
+-/* { dg-message "valid arguments are: \[^\n\r]*; did you mean 'cortex-a57?"  "" { target *-*-* } 5 } */
+-/* { dg-error "unknown value 'cortex-a57-typo' for 'cpu' target attribute"  "" { target *-*-* } 5 } */
+-/* { dg-error "target attribute 'cpu=cortex-a57-typo' is invalid"  "" { target *-*-* } 5 } */
+--- a/src/gcc/testsuite/gcc.target/aarch64/spellcheck_3.c
++++ b/src/gcc/testsuite/gcc.target/aarch64/spellcheck_3.c
+@@ -3,7 +3,7 @@
+ __attribute__((target ("tune=cortex-a57-typo"))) void
+ foo ()
+ {
++  /* { dg-message "valid arguments are: \[^\n\r]*; did you mean 'cortex-a57?"  "" { target *-*-* } .-1 } */
++  /* { dg-error "unknown value 'cortex-a57-typo' for 'tune' target attribute"  "" { target *-*-* } .-2 } */
++  /* { dg-error "target attribute 'tune=cortex-a57-typo' is invalid"  "" { target *-*-* } .-3 } */
+ }
+-/* { dg-message "valid arguments are: \[^\n\r]*; did you mean 'cortex-a57?"  "" { target *-*-* } 5 } */
+-/* { dg-error "unknown value 'cortex-a57-typo' for 'tune' target attribute"  "" { target *-*-* } 5 } */
+-/* { dg-error "target attribute 'tune=cortex-a57-typo' is invalid"  "" { target *-*-* } 5 } */
+--- /dev/null
++++ b/src/gcc/testsuite/gcc.target/aarch64/spill_1.c
+@@ -0,0 +1,18 @@
++/* { dg-do compile } */
++/* { dg-options "-O2" } */
++
++typedef int v4si __attribute__ ((vector_size (16)));
++
++void bar (void);
++void
++foo (void)
++{
++  v4si x = { 1, 1, 1, 1 };
++  asm ("# %0" :: "w" (x));
++  bar ();
++  asm ("# %0" :: "w" (x));
++}
++
++/* { dg-final { scan-assembler-times {\tmovi\tv[0-9]+\.4s,} 2 } } */
++/* { dg-final { scan-assembler-not {\tldr\t} } } */
++/* { dg-final { scan-assembler-not {\tstr\t} } } */
+--- a/src/gcc/testsuite/gcc.target/aarch64/stack-checking.c
++++ b/src/gcc/testsuite/gcc.target/aarch64/stack-checking.c
+@@ -1,4 +1,5 @@
+ /* { dg-do run { target { *-*-linux* } } } */
++/* { dg-require-stack-check "" } */
+ /* { dg-options "-fstack-check" } */
+ 
+ int main(void)
+--- /dev/null
++++ b/src/gcc/testsuite/gcc.target/aarch64/store_lane0_str_1.c
+@@ -0,0 +1,54 @@
++/* { dg-do compile } */
++/* { dg-options "-O2" } */
++
++typedef int v2si __attribute__ ((vector_size (8)));
++typedef float v2sf __attribute__ ((vector_size (8)));
++typedef short v4hi __attribute__ ((vector_size (8)));
++typedef __fp16 v4hf __attribute__ ((vector_size (8)));
++typedef char v8qi __attribute__ ((vector_size (8)));
++
++typedef int v4si __attribute__ ((vector_size (16)));
++typedef float v4sf __attribute__ ((vector_size (16)));
++typedef short v8hi __attribute__ ((vector_size (16)));
++typedef __fp16 v8hf __attribute__ ((vector_size (16)));
++typedef char v16qi __attribute__ ((vector_size (16)));
++typedef long long v2di __attribute__ ((vector_size (16)));
++typedef double v2df __attribute__ ((vector_size (16)));
++
++#if __BYTE_ORDER__ == __ORDER_BIG_ENDIAN__
++#define LANE(N) (N - 1)
++#else
++#define LANE(N) 0
++#endif
++
++#define FUNC(T, E, N)			\
++void					\
++store_lane_##T (T x, E *y)		\
++{					\
++  y[0] = x[N - 1 - LANE (N)];		\
++  y[3] = x[LANE (N)];			\
++}
++
++FUNC (v2si, int, 2)
++FUNC (v2sf, float, 2)
++FUNC (v4hi, short, 4)
++FUNC (v4hf, __fp16, 4)
++FUNC (v8qi, char, 8)
++
++FUNC (v4si, int, 4)
++FUNC (v4sf, float, 4)
++FUNC (v8hi, short, 8)
++FUNC (v8hf, __fp16, 8)
++FUNC (v16qi, char, 16)
++FUNC (v2di, long long, 2)
++FUNC (v2df, double, 2)
++
++/* When storing lane zero of a vector we can use the scalar STR instruction
++   that supports more addressing modes.  */
++
++/* { dg-final { scan-assembler-times "str\ts\[0-9\]+" 4 } } */
++/* { dg-final { scan-assembler-times "str\tb\[0-9\]+" 2 } } */
++/* { dg-final { scan-assembler-times "str\th\[0-9\]+" 4 } } */
++/* { dg-final { scan-assembler-times "str\td\[0-9\]+" 2 } } */
++/* { dg-final { scan-assembler-not "umov" } } */
++/* { dg-final { scan-assembler-not "dup" } } */
+--- /dev/null
++++ b/src/gcc/testsuite/gcc.target/aarch64/subs_compare_1.c
+@@ -0,0 +1,15 @@
++/* { dg-do compile } */
++/* { dg-options "-O2" } */
++
++int
++foo (int a, int b)
++{
++  int x = a - b;
++  if (a <= b)
++    return x;
++  else
++    return 0;
++}
++
++/* { dg-final { scan-assembler-times "subs\\tw\[0-9\]+, w\[0-9\]+, w\[0-9\]+" 1 } } */
++/* { dg-final { scan-assembler-not "cmp\\tw\[0-9\]+, w\[0-9\]+" } } */
+--- /dev/null
++++ b/src/gcc/testsuite/gcc.target/aarch64/subs_compare_2.c
+@@ -0,0 +1,15 @@
++/* { dg-do compile } */
++/* { dg-options "-O2" } */
++
++int
++foo (int a, int b)
++{
++  int x = a - 4;
++  if (a < 4)
++    return x;
++  else
++    return 0;
++}
++
++/* { dg-final { scan-assembler-times "subs\\tw\[0-9\]+, w\[0-9\]+, #4" 1 } } */
++/* { dg-final { scan-assembler-not "cmp\\tw\[0-9\]+, w\[0-9\]+" } } */
+--- /dev/null
++++ b/src/gcc/testsuite/gcc.target/aarch64/vect-init-1.c
+@@ -0,0 +1,12 @@
++/* { dg-do compile } */
++/* { dg-options "-O2" } */
++
++#define vector __attribute__((vector_size(16)))
++
++vector float combine (float a, float b, float c, float d)
++{
++  return (vector float) { a, b, c, d };
++}
++
++/* { dg-final { scan-assembler-not "movi\t" } } */
++/* { dg-final { scan-assembler-not "orr\t" } } */
+--- /dev/null
++++ b/src/gcc/testsuite/gcc.target/aarch64/vect-init-2.c
+@@ -0,0 +1,12 @@
++/* { dg-do compile } */
++/* { dg-options "-O2" } */
++
++#define vector __attribute__((vector_size(16)))
++
++vector float combine (float a, float b, float d)
++{
++  return (vector float) { a, b, a, d };
++}
++
++/* { dg-final { scan-assembler-not "movi\t" } } */
++/* { dg-final { scan-assembler-not "orr\t" } } */
+--- /dev/null
++++ b/src/gcc/testsuite/gcc.target/aarch64/vect-init-3.c
+@@ -0,0 +1,12 @@
++/* { dg-do compile } */
++/* { dg-options "-O2" } */
++
++#define vector __attribute__((vector_size(16)))
++
++vector float combine (float a, float b)
++{
++  return (vector float) { a, b, a, b };
++}
++
++/* { dg-final { scan-assembler-not "movi\t" } } */
++/* { dg-final { scan-assembler-not "orr\t" } } */
+--- /dev/null
++++ b/src/gcc/testsuite/gcc.target/aarch64/vect-init-4.c
+@@ -0,0 +1,12 @@
++/* { dg-do compile } */
++/* { dg-options "-O2" } */
++
++#define vector __attribute__((vector_size(16)))
++
++vector float combine (float a, float b)
++{
++  return (vector float) { a, b, b, a };
++}
++
++/* { dg-final { scan-assembler-not "movi\t" } } */
++/* { dg-final { scan-assembler-not "orr\t" } } */
+--- /dev/null
++++ b/src/gcc/testsuite/gcc.target/aarch64/vect-init-5.c
+@@ -0,0 +1,12 @@
++/* { dg-do compile } */
++/* { dg-options "-O2" } */
++
++#define vector __attribute__((vector_size(16)))
++
++vector float combine (float a, float b)
++{
++  return (vector float) { a, b, a, a };
++}
++
++/* { dg-final { scan-assembler-not "movi\t" } } */
++/* { dg-final { scan-assembler-not "orr\t" } } */
+--- a/src/gcc/testsuite/gcc.target/arm/armv8_2-fp16-arith-1.c
++++ b/src/gcc/testsuite/gcc.target/arm/armv8_2-fp16-arith-1.c
+@@ -3,7 +3,8 @@
+ /* { dg-options "-O2 -ffast-math" }  */
+ /* { dg-add-options arm_v8_2a_fp16_neon }  */
+ 
+-/* Test instructions generated for half-precision arithmetic.  */
++/* Test instructions generated for half-precision arithmetic with
++   unsafe-math-optimizations enabled.  */
+ 
+ typedef __fp16 float16_t;
+ typedef __simd64_float16_t float16x4_t;
+@@ -90,9 +91,18 @@ TEST_CMP (greaterthanqual, >=, int16x8_t, float16x8_t)
+ /* { dg-final { scan-assembler-times {vneg\.f16\tq[0-9]+, q[0-9]+} 1 } }  */
+ /* { dg-final { scan-assembler-times {vabs\.f16\ts[0-9]+, s[0-9]+} 2 } }  */
+ 
+-/* { dg-final { scan-assembler-times {vadd\.f16\ts[0-9]+, s[0-9]+, s[0-9]+} 13 } }  */
+-/* { dg-final { scan-assembler-times {vsub\.f16\ts[0-9]+, s[0-9]+, s[0-9]+} 13 } }  */
+-/* { dg-final { scan-assembler-times {vmul\.f16\ts[0-9]+, s[0-9]+, s[0-9]+} 13 } }  */
++/* { dg-final { scan-assembler-times {vadd\.f16\ts[0-9]+, s[0-9]+, s[0-9]+} 1 } }  */
++/* { dg-final { scan-assembler-times {vadd\.f16\td[0-9]+, d[0-9]+, d[0-9]+} 1 } }  */
++/* { dg-final { scan-assembler-times {vadd\.f16\tq[0-9]+, q[0-9]+, q[0-9]+} 1 } }  */
++
++/* { dg-final { scan-assembler-times {vsub\.f16\ts[0-9]+, s[0-9]+, s[0-9]+} 1 } }  */
++/* { dg-final { scan-assembler-times {vsub\.f16\td[0-9]+, d[0-9]+, d[0-9]+} 1 } }  */
++/* { dg-final { scan-assembler-times {vsub\.f16\tq[0-9]+, q[0-9]+, q[0-9]+} 1 } }  */
++
++/* { dg-final { scan-assembler-times {vmul\.f16\ts[0-9]+, s[0-9]+, s[0-9]+} 1 } }  */
++/* { dg-final { scan-assembler-times {vmul\.f16\td[0-9]+, d[0-9]+, d[0-9]+} 1 } }  */
++/* { dg-final { scan-assembler-times {vmul\.f16\tq[0-9]+, q[0-9]+, q[0-9]+} 1 } }  */
++
+ /* { dg-final { scan-assembler-times {vdiv\.f16\ts[0-9]+, s[0-9]+, s[0-9]+} 13 } }  */
+ /* { dg-final { scan-assembler-times {vcmp\.f32\ts[0-9]+, s[0-9]+} 26 } }  */
+ /* { dg-final { scan-assembler-times {vcmpe\.f32\ts[0-9]+, s[0-9]+} 52 } }  */
+--- /dev/null
++++ b/src/gcc/testsuite/gcc.target/arm/armv8_2-fp16-arith-2.c
+@@ -0,0 +1,109 @@
++/* { dg-do compile }  */
++/* { dg-require-effective-target arm_v8_2a_fp16_neon_ok }  */
++/* { dg-options "-O2 -fno-fast-math" }  */
++/* { dg-add-options arm_v8_2a_fp16_neon }  */
++
++/* Test instructions generated for half-precision arithmetic without
++   unsafe-math-optimizations.  */
++
++typedef __fp16 float16_t;
++typedef __simd64_float16_t float16x4_t;
++typedef __simd128_float16_t float16x8_t;
++
++typedef short int16x4_t __attribute__ ((vector_size (8)));
++typedef short int int16x8_t  __attribute__ ((vector_size (16)));
++
++float16_t
++fp16_abs (float16_t a)
++{
++  return (a < 0) ? -a : a;
++}
++
++#define TEST_UNOP(NAME, OPERATOR, TY)		\
++  TY test_##NAME##_##TY (TY a)			\
++  {						\
++    return OPERATOR (a);			\
++  }
++
++#define TEST_BINOP(NAME, OPERATOR, TY)		\
++  TY test_##NAME##_##TY (TY a, TY b)		\
++  {						\
++    return a OPERATOR b;			\
++  }
++
++#define TEST_CMP(NAME, OPERATOR, RTY, TY)	\
++  RTY test_##NAME##_##TY (TY a, TY b)		\
++  {						\
++    return a OPERATOR b;			\
++  }
++
++/* Scalars.  */
++
++TEST_UNOP (neg, -, float16_t)
++TEST_UNOP (abs, fp16_abs, float16_t)
++
++TEST_BINOP (add, +, float16_t)
++TEST_BINOP (sub, -, float16_t)
++TEST_BINOP (mult, *, float16_t)
++TEST_BINOP (div, /, float16_t)
++
++TEST_CMP (equal, ==, int, float16_t)
++TEST_CMP (unequal, !=, int, float16_t)
++TEST_CMP (lessthan, <, int, float16_t)
++TEST_CMP (greaterthan, >, int, float16_t)
++TEST_CMP (lessthanequal, <=, int, float16_t)
++TEST_CMP (greaterthanqual, >=, int, float16_t)
++
++/* Vectors of size 4.  */
++
++TEST_UNOP (neg, -, float16x4_t)
++
++TEST_BINOP (add, +, float16x4_t)
++TEST_BINOP (sub, -, float16x4_t)
++TEST_BINOP (mult, *, float16x4_t)
++TEST_BINOP (div, /, float16x4_t)
++
++TEST_CMP (equal, ==, int16x4_t, float16x4_t)
++TEST_CMP (unequal, !=, int16x4_t, float16x4_t)
++TEST_CMP (lessthan, <, int16x4_t, float16x4_t)
++TEST_CMP (greaterthan, >, int16x4_t, float16x4_t)
++TEST_CMP (lessthanequal, <=, int16x4_t, float16x4_t)
++TEST_CMP (greaterthanqual, >=, int16x4_t, float16x4_t)
++
++/* Vectors of size 8.  */
++
++TEST_UNOP (neg, -, float16x8_t)
++
++TEST_BINOP (add, +, float16x8_t)
++TEST_BINOP (sub, -, float16x8_t)
++TEST_BINOP (mult, *, float16x8_t)
++TEST_BINOP (div, /, float16x8_t)
++
++TEST_CMP (equal, ==, int16x8_t, float16x8_t)
++TEST_CMP (unequal, !=, int16x8_t, float16x8_t)
++TEST_CMP (lessthan, <, int16x8_t, float16x8_t)
++TEST_CMP (greaterthan, >, int16x8_t, float16x8_t)
++TEST_CMP (lessthanequal, <=, int16x8_t, float16x8_t)
++TEST_CMP (greaterthanqual, >=, int16x8_t, float16x8_t)
++
++/* { dg-final { scan-assembler-times {vneg\.f16\ts[0-9]+, s[0-9]+} 1 } }  */
++/* { dg-final { scan-assembler-times {vneg\.f16\td[0-9]+, d[0-9]+} 1 } }  */
++/* { dg-final { scan-assembler-times {vneg\.f16\tq[0-9]+, q[0-9]+} 1 } }  */
++
++/* { dg-final { scan-assembler-times {vadd\.f16\ts[0-9]+, s[0-9]+, s[0-9]+} 13 } }  */
++/* { dg-final { scan-assembler-times {vsub\.f16\ts[0-9]+, s[0-9]+, s[0-9]+} 13 } }  */
++/* { dg-final { scan-assembler-times {vmul\.f16\ts[0-9]+, s[0-9]+, s[0-9]+} 13 } }  */
++/* { dg-final { scan-assembler-times {vdiv\.f16\ts[0-9]+, s[0-9]+, s[0-9]+} 13 } }  */
++/* { dg-final { scan-assembler-times {vcmp\.f32\ts[0-9]+, s[0-9]+} 26 } }  */
++
++/* { dg-final { scan-assembler-times {vcmpe\.f32\ts[0-9]+, s[0-9]+} 52 } }  */
++/* { dg-final { scan-assembler-times {vcmpe\.f32\ts[0-9]+, #0} 2 } }  */
++
++/* { dg-final { scan-assembler-not {vabs\.f16} } }  */
++
++/* { dg-final { scan-assembler-not {vadd\.f32} } }  */
++/* { dg-final { scan-assembler-not {vsub\.f32} } }  */
++/* { dg-final { scan-assembler-not {vmul\.f32} } }  */
++/* { dg-final { scan-assembler-not {vdiv\.f32} } }  */
++/* { dg-final { scan-assembler-not {vcmp\.f16} } }  */
++/* { dg-final { scan-assembler-not {vcmpe\.f16} } }  */
+--- a/src/gcc/testsuite/gcc.target/arm/armv8_2-fp16-neon-1.c
++++ b/src/gcc/testsuite/gcc.target/arm/armv8_2-fp16-neon-1.c
+@@ -137,7 +137,7 @@
+   }
+ 
+ VCMP1_TEST (vceqz)
+-/* { dg-final { scan-assembler-times {vceq\.f16\td[0-9]+, d[0-0]+, #0} 1 } }  */
++/* { dg-final { scan-assembler-times {vceq\.f16\td[0-9]+, d[0-9]+, #0} 1 } }  */
+ /* { dg-final { scan-assembler-times {vceq\.f16\tq[0-9]+, q[0-9]+, #0} 1 } }  */
+ 
+ VCMP1_TEST (vcgtz)
+--- /dev/null
++++ b/src/gcc/testsuite/gcc.target/arm/armv8_2-fp16-neon-2.c
+@@ -0,0 +1,491 @@
++/* { dg-do compile }  */
++/* { dg-require-effective-target arm_v8_2a_fp16_neon_ok }  */
++/* { dg-options "-O2 -ffast-math" }  */
++/* { dg-add-options arm_v8_2a_fp16_neon }  */
++
++/* Test instructions generated for the FP16 vector intrinsics with
++   -ffast-math */
++
++#include <arm_neon.h>
++
++#define MSTRCAT(L, str)	L##str
++
++#define UNOP_TEST(insn)				\
++  float16x4_t					\
++  MSTRCAT (test_##insn, _16x4) (float16x4_t a)	\
++  {						\
++    return MSTRCAT (insn, _f16) (a);		\
++  }						\
++  float16x8_t					\
++  MSTRCAT (test_##insn, _16x8) (float16x8_t a)	\
++  {						\
++    return MSTRCAT (insn, q_f16) (a);		\
++  }
++
++#define BINOP_TEST(insn)					\
++  float16x4_t							\
++  MSTRCAT (test_##insn, _16x4) (float16x4_t a, float16x4_t b)	\
++  {								\
++    return MSTRCAT (insn, _f16) (a, b);				\
++  }								\
++  float16x8_t							\
++  MSTRCAT (test_##insn, _16x8) (float16x8_t a, float16x8_t b)	\
++  {								\
++    return MSTRCAT (insn, q_f16) (a, b);			\
++  }
++
++#define BINOP_LANE_TEST(insn, I)					\
++  float16x4_t								\
++  MSTRCAT (test_##insn##_lane, _16x4) (float16x4_t a, float16x4_t b)	\
++  {									\
++    return MSTRCAT (insn, _lane_f16) (a, b, I);				\
++  }									\
++  float16x8_t								\
++  MSTRCAT (test_##insn##_lane, _16x8) (float16x8_t a, float16x4_t b)	\
++  {									\
++    return MSTRCAT (insn, q_lane_f16) (a, b, I);			\
++  }
++
++#define BINOP_LANEQ_TEST(insn, I)					\
++  float16x4_t								\
++  MSTRCAT (test_##insn##_laneq, _16x4) (float16x4_t a, float16x8_t b)	\
++  {									\
++    return MSTRCAT (insn, _laneq_f16) (a, b, I);			\
++  }									\
++  float16x8_t								\
++  MSTRCAT (test_##insn##_laneq, _16x8) (float16x8_t a, float16x8_t b)	\
++  {									\
++    return MSTRCAT (insn, q_laneq_f16) (a, b, I);			\
++  }									\
++
++#define BINOP_N_TEST(insn)					\
++  float16x4_t							\
++  MSTRCAT (test_##insn##_n, _16x4) (float16x4_t a, float16_t b)	\
++  {								\
++    return MSTRCAT (insn, _n_f16) (a, b);			\
++  }								\
++  float16x8_t							\
++  MSTRCAT (test_##insn##_n, _16x8) (float16x8_t a, float16_t b)	\
++  {								\
++    return MSTRCAT (insn, q_n_f16) (a, b);			\
++  }
++
++#define TERNOP_TEST(insn)						\
++  float16_t								\
++  MSTRCAT (test_##insn, _16) (float16_t a, float16_t b, float16_t c)	\
++  {									\
++    return MSTRCAT (insn, h_f16) (a, b, c);				\
++  }									\
++  float16x4_t								\
++  MSTRCAT (test_##insn, _16x4) (float16x4_t a, float16x4_t b,		\
++			       float16x4_t c)				\
++  {									\
++    return MSTRCAT (insn, _f16) (a, b, c);				\
++  }									\
++  float16x8_t								\
++  MSTRCAT (test_##insn, _16x8) (float16x8_t a, float16x8_t b,		\
++			       float16x8_t c)				\
++  {									\
++    return MSTRCAT (insn, q_f16) (a, b, c);				\
++  }
++
++#define VCMP1_TEST(insn)			\
++  uint16x4_t					\
++  MSTRCAT (test_##insn, _16x4) (float16x4_t a)	\
++  {						\
++    return MSTRCAT (insn, _f16) (a);		\
++  }						\
++  uint16x8_t					\
++  MSTRCAT (test_##insn, _16x8) (float16x8_t a)	\
++  {						\
++    return MSTRCAT (insn, q_f16) (a);		\
++  }
++
++#define VCMP2_TEST(insn)					\
++  uint16x4_t							\
++  MSTRCAT (test_##insn, _16x4) (float16x4_t a, float16x4_t b)	\
++  {								\
++    return MSTRCAT (insn, _f16) (a, b);				\
++  }								\
++  uint16x8_t							\
++  MSTRCAT (test_##insn, _16x8) (float16x8_t a, float16x8_t b)	\
++  {								\
++    return MSTRCAT (insn, q_f16) (a, b);			\
++  }
++
++#define VCVT_TEST(insn, TY, TO, FR)			\
++  MSTRCAT (TO, 16x4_t)					\
++  MSTRCAT (test_##insn, TY) (MSTRCAT (FR, 16x4_t) a)	\
++  {							\
++    return MSTRCAT (insn, TY) (a);			\
++  }							\
++  MSTRCAT (TO, 16x8_t)					\
++  MSTRCAT (test_##insn##_q, TY) (MSTRCAT (FR, 16x8_t) a)	\
++  {							\
++    return MSTRCAT (insn, q##TY) (a);			\
++  }
++
++#define VCVT_N_TEST(insn, TY, TO, FR)			\
++  MSTRCAT (TO, 16x4_t)					\
++  MSTRCAT (test_##insn##_n, TY) (MSTRCAT (FR, 16x4_t) a)	\
++  {							\
++    return MSTRCAT (insn, _n##TY) (a, 1);		\
++  }							\
++  MSTRCAT (TO, 16x8_t)					\
++  MSTRCAT (test_##insn##_n_q, TY) (MSTRCAT (FR, 16x8_t) a)	\
++  {							\
++    return MSTRCAT (insn, q_n##TY) (a, 1);		\
++  }
++
++VCMP1_TEST (vceqz)
++/* { dg-final { scan-assembler-times {vceq\.f16\td[0-9]+, d[0-9]+, #0} 1 } }  */
++/* { dg-final { scan-assembler-times {vceq\.f16\tq[0-9]+, q[0-9]+, #0} 1 } }  */
++
++VCMP1_TEST (vcgtz)
++/* { dg-final { scan-assembler-times {vcgt\.f16\td[0-9]+, d[0-9]+, #0} 1 } }  */
++/* { dg-final { scan-assembler-times {vceq\.f16\tq[0-9]+, q[0-9]+, #0} 1 } }  */
++
++VCMP1_TEST (vcgez)
++/* { dg-final { scan-assembler-times {vcge\.f16\td[0-9]+, d[0-9]+, #0} 1 } }  */
++/* { dg-final { scan-assembler-times {vcge\.f16\tq[0-9]+, q[0-9]+, #0} 1 } }  */
++
++VCMP1_TEST (vcltz)
++/* { dg-final { scan-assembler-times {vclt.f16\td[0-9]+, d[0-9]+, #0} 1 } }  */
++/* { dg-final { scan-assembler-times {vclt.f16\tq[0-9]+, q[0-9]+, #0} 1 } }  */
++
++VCMP1_TEST (vclez)
++/* { dg-final { scan-assembler-times {vcle\.f16\td[0-9]+, d[0-9]+, #0} 1 } }  */
++/* { dg-final { scan-assembler-times {vcle\.f16\tq[0-9]+, q[0-9]+, #0} 1 } }  */
++
++VCVT_TEST (vcvt, _f16_s16, float, int)
++VCVT_N_TEST (vcvt, _f16_s16, float, int)
++/* { dg-final { scan-assembler-times {vcvt\.f16\.s16\td[0-9]+, d[0-9]+} 2 } }
++   { dg-final { scan-assembler-times {vcvt\.f16\.s16\tq[0-9]+, q[0-9]+} 2 } }
++   { dg-final { scan-assembler-times {vcvt\.f16\.s16\td[0-9]+, d[0-9]+, #1} 1 } }
++   { dg-final { scan-assembler-times {vcvt\.f16\.s16\tq[0-9]+, q[0-9]+, #1} 1 } }  */
++
++VCVT_TEST (vcvt, _f16_u16, float, uint)
++VCVT_N_TEST (vcvt, _f16_u16, float, uint)
++/* { dg-final { scan-assembler-times {vcvt\.f16\.u16\td[0-9]+, d[0-9]+} 2 } }
++   { dg-final { scan-assembler-times {vcvt\.f16\.u16\tq[0-9]+, q[0-9]+} 2 } }
++   { dg-final { scan-assembler-times {vcvt\.f16\.u16\td[0-9]+, d[0-9]+, #1} 1 } }
++   { dg-final { scan-assembler-times {vcvt\.f16\.u16\tq[0-9]+, q[0-9]+, #1} 1 } }  */
++
++VCVT_TEST (vcvt, _s16_f16, int, float)
++VCVT_N_TEST (vcvt, _s16_f16, int, float)
++/* { dg-final { scan-assembler-times {vcvt\.s16\.f16\td[0-9]+, d[0-9]+} 2 } }
++   { dg-final { scan-assembler-times {vcvt\.s16\.f16\tq[0-9]+, q[0-9]+} 2 } }
++   { dg-final { scan-assembler-times {vcvt\.s16\.f16\td[0-9]+, d[0-9]+, #1} 1 } }
++   { dg-final { scan-assembler-times {vcvt\.s16\.f16\tq[0-9]+, q[0-9]+, #1} 1 } }  */
++
++VCVT_TEST (vcvt, _u16_f16, uint, float)
++VCVT_N_TEST (vcvt, _u16_f16, uint, float)
++/* { dg-final { scan-assembler-times {vcvt\.u16\.f16\td[0-9]+, d[0-9]+} 2 } }
++   { dg-final { scan-assembler-times {vcvt\.u16\.f16\tq[0-9]+, q[0-9]+} 2 } }
++   { dg-final { scan-assembler-times {vcvt\.u16\.f16\td[0-9]+, d[0-9]+, #1} 1 } }
++   { dg-final { scan-assembler-times {vcvt\.u16\.f16\tq[0-9]+, q[0-9]+, #1} 1 } }  */
++
++VCVT_TEST (vcvta, _s16_f16, int, float)
++/* { dg-final { scan-assembler-times {vcvta\.s16\.f16\td[0-9]+, d[0-9]+} 1 } }
++   { dg-final { scan-assembler-times {vcvta\.s16\.f16\tq[0-9]+, q[0-9]+} 1 } }
++*/
++
++VCVT_TEST (vcvta, _u16_f16, uint, float)
++/* { dg-final { scan-assembler-times {vcvta\.u16\.f16\td[0-9]+, d[0-9]+} 1 } }
++   { dg-final { scan-assembler-times {vcvta\.u16\.f16\tq[0-9]+, q[0-9]+} 1 } }
++*/
++
++VCVT_TEST (vcvtm, _s16_f16, int, float)
++/* { dg-final { scan-assembler-times {vcvtm\.s16\.f16\td[0-9]+, d[0-9]+} 1 } }
++   { dg-final { scan-assembler-times {vcvtm\.s16\.f16\tq[0-9]+, q[0-9]+} 1 } }
++*/
++
++VCVT_TEST (vcvtm, _u16_f16, uint, float)
++/* { dg-final { scan-assembler-times {vcvtm\.u16\.f16\td[0-9]+, d[0-9]+} 1 } }
++   { dg-final { scan-assembler-times {vcvtm\.u16\.f16\tq[0-9]+, q[0-9]+} 1 } }
++*/
++
++VCVT_TEST (vcvtn, _s16_f16, int, float)
++/* { dg-final { scan-assembler-times {vcvtn\.s16\.f16\td[0-9]+, d[0-9]+} 1 } }
++   { dg-final { scan-assembler-times {vcvtn\.s16\.f16\tq[0-9]+, q[0-9]+} 1 } }
++*/
++
++VCVT_TEST (vcvtn, _u16_f16, uint, float)
++/* { dg-final { scan-assembler-times {vcvtn\.u16\.f16\td[0-9]+, d[0-9]+} 1 } }
++   { dg-final { scan-assembler-times {vcvtn\.u16\.f16\tq[0-9]+, q[0-9]+} 1 } }
++*/
++
++VCVT_TEST (vcvtp, _s16_f16, int, float)
++/* { dg-final { scan-assembler-times {vcvtp\.s16\.f16\td[0-9]+, d[0-9]+} 1 } }
++   { dg-final { scan-assembler-times {vcvtp\.s16\.f16\tq[0-9]+, q[0-9]+} 1 } }
++*/
++
++VCVT_TEST (vcvtp, _u16_f16, uint, float)
++/* { dg-final { scan-assembler-times {vcvtp\.u16\.f16\td[0-9]+, d[0-9]+} 1 } }
++   { dg-final { scan-assembler-times {vcvtp\.u16\.f16\tq[0-9]+, q[0-9]+} 1 } }
++*/
++
++UNOP_TEST (vabs)
++/* { dg-final { scan-assembler-times {vabs\.f16\td[0-9]+, d[0-9]+} 1 } }
++   { dg-final { scan-assembler-times {vabs\.f16\tq[0-9]+, q[0-9]+} 1 } }  */
++
++UNOP_TEST (vneg)
++/* { dg-final { scan-assembler-times {vneg\.f16\td[0-9]+, d[0-9]+} 1 } }
++   { dg-final { scan-assembler-times {vneg\.f16\tq[0-9]+, q[0-9]+} 1 } }  */
++
++UNOP_TEST (vrecpe)
++/* { dg-final { scan-assembler-times {vrecpe\.f16\td[0-9]+, d[0-9]+} 1 } }
++   { dg-final { scan-assembler-times {vrecpe\.f16\tq[0-9]+, q[0-9]+} 1 } }  */
++
++UNOP_TEST (vrnd)
++/* { dg-final { scan-assembler-times {vrintz\.f16\td[0-9]+, d[0-9]+} 1 } }
++   { dg-final { scan-assembler-times {vrintz\.f16\tq[0-9]+, q[0-9]+} 1 } }  */
++
++UNOP_TEST (vrnda)
++/* { dg-final { scan-assembler-times {vrinta\.f16\td[0-9]+, d[0-9]+} 1 } }
++   { dg-final { scan-assembler-times {vrinta\.f16\tq[0-9]+, q[0-9]+} 1 } }  */
++
++UNOP_TEST (vrndm)
++/* { dg-final { scan-assembler-times {vrintm\.f16\td[0-9]+, d[0-9]+} 1 } }
++   { dg-final { scan-assembler-times {vrintm\.f16\tq[0-9]+, q[0-9]+} 1 } }  */
++
++UNOP_TEST (vrndn)
++/* { dg-final { scan-assembler-times {vrintn\.f16\td[0-9]+, d[0-9]+} 1 } }
++   { dg-final { scan-assembler-times {vrintn\.f16\tq[0-9]+, q[0-9]+} 1 } }  */
++
++UNOP_TEST (vrndp)
++/* { dg-final { scan-assembler-times {vrintp\.f16\td[0-9]+, d[0-9]+} 1 } }
++   { dg-final { scan-assembler-times {vrintp\.f16\tq[0-9]+, q[0-9]+} 1 } }  */
++
++UNOP_TEST (vrndx)
++/* { dg-final { scan-assembler-times {vrintx\.f16\td[0-9]+, d[0-9]+} 1 } }
++   { dg-final { scan-assembler-times {vrintx\.f16\tq[0-9]+, q[0-9]+} 1 } }  */
++
++UNOP_TEST (vrsqrte)
++/* { dg-final { scan-assembler-times {vrsqrte\.f16\td[0-9]+, d[0-9]+} 1 } }
++   { dg-final { scan-assembler-times {vrsqrte\.f16\tq[0-9]+, q[0-9]+} 1 } }  */
++
++BINOP_TEST (vadd)
++/* { dg-final { scan-assembler-times {vadd\.f16\td[0-9]+, d[0-9]+, d[0-9]+} 1 } }
++   { dg-final { scan-assembler-times {vadd\.f16\tq[0-9]+, q[0-9]+, q[0-9]+} 1 } }  */
++
++BINOP_TEST (vabd)
++/* { dg-final { scan-assembler-times {vabd\.f16\td[0-9]+, d[0-9]+, d[0-9]+} 1 } }
++   { dg-final { scan-assembler-times {vabd\.f16\tq[0-9]+, q[0-9]+, q[0-9]+} 1 } }  */
++
++VCMP2_TEST (vcage)
++/* { dg-final { scan-assembler-times {vacge\.f16\td[0-9]+, d[0-9]+, d[0-9]+} 1 } }
++   { dg-final { scan-assembler-times {vacge\.f16\tq[0-9]+, q[0-9]+, q[0-9]+} 1 } }  */
++
++VCMP2_TEST (vcagt)
++/* { dg-final { scan-assembler-times {vacgt\.f16\td[0-9]+, d[0-9]+, d[0-9]+} 1 } }
++   { dg-final { scan-assembler-times {vacgt\.f16\tq[0-9]+, q[0-9]+, q[0-9]+} 1 } }  */
++
++VCMP2_TEST (vcale)
++/* { dg-final { scan-assembler-times {vacle\.f16\td[0-9]+, d[0-9]+, d[0-9]+} 1 } }
++   { dg-final { scan-assembler-times {vacle\.f16\tq[0-9]+, q[0-9]+, q[0-9]+} 1 } }  */
++
++VCMP2_TEST (vcalt)
++/* { dg-final { scan-assembler-times {vaclt\.f16\td[0-9]+, d[0-9]+, d[0-9]+} 1 } }
++   { dg-final { scan-assembler-times {vaclt\.f16\tq[0-9]+, q[0-9]+, q[0-9]+} 1 } }  */
++
++VCMP2_TEST (vceq)
++/* { dg-final { scan-assembler-times {vceq\.f16\td[0-9]+, d[0-9]+, d[0-9]+} 1 } }
++   { dg-final { scan-assembler-times {vceq\.f16\tq[0-9]+, q[0-9]+, q[0-9]+} 1 } }  */
++
++VCMP2_TEST (vcge)
++/* { dg-final { scan-assembler-times {vcge\.f16\td[0-9]+, d[0-9]+, d[0-9]+} 1 } }
++   { dg-final { scan-assembler-times {vcge\.f16\tq[0-9]+, q[0-9]+, q[0-9]+} 1 } }  */
++
++VCMP2_TEST (vcgt)
++/* { dg-final { scan-assembler-times {vcgt\.f16\td[0-9]+, d[0-9]+, d[0-9]+} 1 } }
++   { dg-final { scan-assembler-times {vcgt\.f16\tq[0-9]+, q[0-9]+, q[0-9]+} 1 } }  */
++
++VCMP2_TEST (vcle)
++/* { dg-final { scan-assembler-times {vcle\.f16\td[0-9]+, d[0-9]+, d[0-9]+} 1 } }
++   { dg-final { scan-assembler-times {vcle\.f16\tq[0-9]+, q[0-9]+, q[0-9]+} 1 } }  */
++
++VCMP2_TEST (vclt)
++/* { dg-final { scan-assembler-times {vclt\.f16\td[0-9]+, d[0-9]+, d[0-9]+} 1 } }
++   { dg-final { scan-assembler-times {vclt\.f16\tq[0-9]+, q[0-9]+, q[0-9]+} 1 } }  */
++
++BINOP_TEST (vmax)
++/* { dg-final { scan-assembler-times {vmax\.f16\td[0-9]+, d[0-9]+, d[0-9]+} 1 } }
++   { dg-final { scan-assembler-times {vmax\.f16\tq[0-9]+, q[0-9]+, q[0-9]+} 1 } }  */
++
++BINOP_TEST (vmin)
++/* { dg-final { scan-assembler-times {vmin\.f16\td[0-9]+, d[0-9]+, d[0-9]+} 1 } }
++   { dg-final { scan-assembler-times {vmin\.f16\tq[0-9]+, q[0-9]+, q[0-9]+} 1 } }  */
++
++BINOP_TEST (vmaxnm)
++/* { dg-final { scan-assembler-times {vmaxnm\.f16\td[0-9]+, d[0-9]+, d[0-9]+} 1 } }
++  { dg-final { scan-assembler-times {vmaxnm\.f16\tq[0-9]+, q[0-9]+, q[0-9]+} 1 } }  */
++
++BINOP_TEST (vminnm)
++/* { dg-final { scan-assembler-times {vminnm\.f16\td[0-9]+, d[0-9]+, d[0-9]+} 1 } }
++  { dg-final { scan-assembler-times {vminnm\.f16\tq[0-9]+, q[0-9]+, q[0-9]+} 1 } }  */
++
++BINOP_TEST (vmul)
++/* { dg-final { scan-assembler-times {vmul\.f16\td[0-9]+, d[0-9]+, d[0-9]+} 3 } }
++   { dg-final { scan-assembler-times {vmul\.f16\tq[0-9]+, q[0-9]+, q[0-9]+} 1 } }  */
++BINOP_LANE_TEST (vmul, 2)
++/* { dg-final { scan-assembler-times {vmul\.f16\td[0-9]+, d[0-9]+, d[0-9]+\[2\]} 1 } }
++   { dg-final { scan-assembler-times {vmul\.f16\tq[0-9]+, q[0-9]+, d[0-9]+\[2\]} 1 } }  */
++BINOP_N_TEST (vmul)
++/* { dg-final { scan-assembler-times {vmul\.f16\td[0-9]+, d[0-9]+, d[0-9]+\[0\]} 1 } }
++   { dg-final { scan-assembler-times {vmul\.f16\tq[0-9]+, q[0-9]+, d[0-9]+\[0\]} 1 } }*/
++
++float16x4_t
++test_vpadd_16x4 (float16x4_t a, float16x4_t b)
++{
++  return vpadd_f16 (a, b);
++}
++/* { dg-final { scan-assembler-times {vpadd\.f16\td[0-9]+, d[0-9]+, d[0-9]+} 1 } } */
++
++float16x4_t
++test_vpmax_16x4 (float16x4_t a, float16x4_t b)
++{
++  return vpmax_f16 (a, b);
++}
++/* { dg-final { scan-assembler-times {vpmax\.f16\td[0-9]+, d[0-9]+, d[0-9]+} 1 } } */
++
++float16x4_t
++test_vpmin_16x4 (float16x4_t a, float16x4_t b)
++{
++  return vpmin_f16 (a, b);
++}
++/* { dg-final { scan-assembler-times {vpmin\.f16\td[0-9]+, d[0-9]+, d[0-9]+} 1 } } */
++
++BINOP_TEST (vsub)
++/* { dg-final { scan-assembler-times {vsub\.f16\td[0-9]+, d[0-9]+, d[0-9]+} 1 } }
++   { dg-final { scan-assembler-times {vsub\.f16\tq[0-9]+, q[0-9]+, q[0-9]+} 1 } }  */
++
++BINOP_TEST (vrecps)
++/* { dg-final { scan-assembler-times {vrecps\.f16\td[0-9]+, d[0-9]+, d[0-9]+} 1 } }
++  { dg-final { scan-assembler-times {vrecps\.f16\tq[0-9]+, q[0-9]+, q[0-9]+} 1 } }  */
++
++BINOP_TEST (vrsqrts)
++/* { dg-final { scan-assembler-times {vrsqrts\.f16\td[0-9]+, d[0-9]+, d[0-9]+} 1 } }
++  { dg-final { scan-assembler-times {vrsqrts\.f16\tq[0-9]+, q[0-9]+, q[0-9]+} 1 } }  */
++
++TERNOP_TEST (vfma)
++/* { dg-final { scan-assembler-times {vfma\.f16\td[0-9]+, d[0-9]+, d[0-9]+} 1 } }
++  { dg-final { scan-assembler-times {vfma\.f16\tq[0-9]+, q[0-9]+, q[0-9]+} 1 } }  */
++
++TERNOP_TEST (vfms)
++/* { dg-final { scan-assembler-times {vfms\.f16\td[0-9]+, d[0-9]+, d[0-9]+} 1 } }
++  { dg-final { scan-assembler-times {vfms\.f16\tq[0-9]+, q[0-9]+, q[0-9]+} 1 } }  */
++
++float16x4_t
++test_vmov_n_f16 (float16_t a)
++{
++  return vmov_n_f16 (a);
++}
++
++float16x4_t
++test_vdup_n_f16 (float16_t a)
++{
++  return vdup_n_f16 (a);
++}
++/* { dg-final { scan-assembler-times {vdup\.16\td[0-9]+, r[0-9]+} 2 } }  */
++
++float16x8_t
++test_vmovq_n_f16 (float16_t a)
++{
++  return vmovq_n_f16 (a);
++}
++
++float16x8_t
++test_vdupq_n_f16 (float16_t a)
++{
++  return vdupq_n_f16 (a);
++}
++/* { dg-final { scan-assembler-times {vdup\.16\tq[0-9]+, r[0-9]+} 2 } }  */
++
++float16x4_t
++test_vdup_lane_f16 (float16x4_t a)
++{
++  return vdup_lane_f16 (a, 1);
++}
++/* { dg-final { scan-assembler-times {vdup\.16\td[0-9]+, d[0-9]+\[1\]} 1 } }  */
++
++float16x8_t
++test_vdupq_lane_f16 (float16x4_t a)
++{
++  return vdupq_lane_f16 (a, 1);
++}
++/* { dg-final { scan-assembler-times {vdup\.16\tq[0-9]+, d[0-9]+\[1\]} 1 } }  */
++
++float16x4_t
++test_vext_f16 (float16x4_t a, float16x4_t b)
++{
++  return vext_f16 (a, b, 1);
++}
++/* { dg-final { scan-assembler-times {vext\.16\td[0-9]+, d[0-9]+, d[0-9]+, #1} 1 } } */
++
++float16x8_t
++test_vextq_f16 (float16x8_t a, float16x8_t b)
++{
++  return vextq_f16 (a, b, 1);
++}
++/*   { dg-final { scan-assembler-times {vext\.16\tq[0-9]+, q[0-9]+, q[0-9]+, #1} 1 } }  */
++
++UNOP_TEST (vrev64)
++/* { dg-final { scan-assembler-times {vrev64\.16\td[0-9]+, d[0-9]+} 1 } }
++   { dg-final { scan-assembler-times {vrev64\.16\tq[0-9]+, q[0-9]+} 1 } }  */
++
++float16x4_t
++test_vbsl16x4 (uint16x4_t a, float16x4_t b, float16x4_t c)
++{
++  return vbsl_f16 (a, b, c);
++}
++/* { dg-final { scan-assembler-times {vbsl\td[0-9]+, d[0-9]+, d[0-9]+} 1 } }  */
++
++float16x8_t
++test_vbslq16x8 (uint16x8_t a, float16x8_t b, float16x8_t c)
++{
++  return vbslq_f16 (a, b, c);
++}
++/*{ dg-final { scan-assembler-times {vbsl\tq[0-9]+, q[0-9]+, q[0-9]+} 1 } }  */
++
++float16x4x2_t
++test_vzip16x4 (float16x4_t a, float16x4_t b)
++{
++  return vzip_f16 (a, b);
++}
++/* { dg-final { scan-assembler-times {vzip\.16\td[0-9]+, d[0-9]+} 1 } }  */
++
++float16x8x2_t
++test_vzipq16x8 (float16x8_t a, float16x8_t b)
++{
++  return vzipq_f16 (a, b);
++}
++/*{ dg-final { scan-assembler-times {vzip\.16\tq[0-9]+, q[0-9]+} 1 } }  */
++
++float16x4x2_t
++test_vuzp16x4 (float16x4_t a, float16x4_t b)
++{
++  return vuzp_f16 (a, b);
++}
++/* { dg-final { scan-assembler-times {vuzp\.16\td[0-9]+, d[0-9]+} 1 } }  */
++
++float16x8x2_t
++test_vuzpq16x8 (float16x8_t a, float16x8_t b)
++{
++  return vuzpq_f16 (a, b);
++}
++/*{ dg-final { scan-assembler-times {vuzp\.16\tq[0-9]+, q[0-9]+} 1 } }  */
++
++float16x4x2_t
++test_vtrn16x4 (float16x4_t a, float16x4_t b)
++{
++  return vtrn_f16 (a, b);
++}
++/* { dg-final { scan-assembler-times {vtrn\.16\td[0-9]+, d[0-9]+} 1 } }  */
++
++float16x8x2_t
++test_vtrnq16x8 (float16x8_t a, float16x8_t b)
++{
++  return vtrnq_f16 (a, b);
++}
++/*{ dg-final { scan-assembler-times {vtrn\.16\tq[0-9]+, q[0-9]+} 1 } }  */
+--- /dev/null
++++ b/src/gcc/testsuite/gcc.target/arm/armv8_2-fp16-neon-3.c
+@@ -0,0 +1,108 @@
++/* { dg-do compile }  */
++/* { dg-require-effective-target arm_v8_2a_fp16_neon_ok }  */
++/* { dg-options "-O2 -ffast-math" }  */
++/* { dg-add-options arm_v8_2a_fp16_neon }  */
++
++/* Test compiler use of FP16 FMA/FMS instructions with -ffast-math.  */
++
++#include <arm_neon.h>
++
++float16x4_t
++test_vfma_1 (float16x4_t a, float16x4_t b, float16x4_t c)
++{
++  return vadd_f16 (vmul_f16 (a, b), c);
++}
++
++float16x4_t
++test_vfma_2 (float16x4_t a, float16x4_t b, float16x4_t c)
++{
++  return vsub_f16 (vmul_f16 (a, b), vneg_f16 (c));
++}
++
++float16x4_t
++test_vfma_3 (float16x4_t a, float16x4_t b, float16x4_t c)
++{
++  return vsub_f16 (vmul_f16 (vneg_f16 (a), vneg_f16 (b)), vneg_f16 (c));
++}
++
++float16x4_t
++test_vfma_4 (float16x4_t a, float16x4_t b, float16x4_t c)
++{
++  return vsub_f16 (vmul_f16 (a, b), vneg_f16 (c));
++}
++/* { dg-final { scan-assembler-times {vfma\.f16\td[0-9]+, d[0-9]+, d[0-9]+} 4 } }  */
++
++float16x8_t
++test_vfmaq_1 (float16x8_t a, float16x8_t b, float16x8_t c)
++{
++  return vaddq_f16 (vmulq_f16 (a, b), c);
++}
++
++float16x8_t
++test_vfmaq_2 (float16x8_t a, float16x8_t b, float16x8_t c)
++{
++  return vsubq_f16 (vmulq_f16 (a, b), vnegq_f16 (c));
++}
++
++float16x8_t
++test_vfmaq_3 (float16x8_t a, float16x8_t b, float16x8_t c)
++{
++  return vsubq_f16 (vmulq_f16 (vnegq_f16 (a), vnegq_f16 (b)), vnegq_f16 (c));
++}
++
++float16x8_t
++test_vfmaq_4 (float16x8_t a, float16x8_t b, float16x8_t c)
++{
++  return vsubq_f16 (vmulq_f16 (a, b), vnegq_f16 (c));
++}
++/* { dg-final { scan-assembler-times {vfma\.f16\tq[0-9]+, q[0-9]+, q[0-9]+} 4 } }  */
++
++float16x4_t
++test_vfms_1 (float16x4_t a, float16x4_t b, float16x4_t c)
++{
++  return vsub_f16 (c, vmul_f16 (a, b));
++}
++
++float16x4_t
++test_vfms_2 (float16x4_t a, float16x4_t b, float16x4_t c)
++{
++  return vsub_f16 (a, vmul_f16 (b, c));
++}
++
++float16x4_t
++test_vfms_3 (float16x4_t a, float16x4_t b, float16x4_t c)
++{
++  return vadd_f16 (vmul_f16 (vneg_f16 (a), b), c);
++}
++
++float16x4_t
++test_vfms_4 (float16x4_t a, float16x4_t b, float16x4_t c)
++{
++  return vadd_f16 (vmul_f16 (a, vneg_f16 (b)), c);
++}
++/* { dg-final { scan-assembler-times {vfms\.f16\td[0-9]+, d[0-9]+, d[0-9]+} 4 } } */
++
++float16x8_t
++test_vfmsq_1 (float16x8_t a, float16x8_t b, float16x8_t c)
++{
++  return vsubq_f16 (c, vmulq_f16 (a, b));
++}
++
++float16x8_t
++test_vfmsq_2 (float16x8_t a, float16x8_t b, float16x8_t c)
++{
++  return vsubq_f16 (a, vmulq_f16 (b, c));
++}
++
++float16x8_t
++test_vfmsq_3 (float16x8_t a, float16x8_t b, float16x8_t c)
++{
++  return vaddq_f16 (vmulq_f16 (vnegq_f16 (a), b), c);
++}
++
++float16x8_t
++test_vfmsq_4 (float16x8_t a, float16x8_t b, float16x8_t c)
++{
++  return vaddq_f16 (vmulq_f16 (a, vnegq_f16 (b)), c);
++}
++/* { dg-final { scan-assembler-times {vfms\.f16\tq[0-9]+, q[0-9]+, q[0-9]+} 4 } } */
+--- /dev/null
++++ b/src/gcc/testsuite/gcc.target/arm/movdi_movt.c
+@@ -0,0 +1,18 @@
++/* { dg-do compile { target { arm_cortex_m && { arm_thumb2_ok || arm_thumb1_movt_ok } } } } */
++/* { dg-options "-O2 -mslow-flash-data" } */
++
++unsigned long long
++movdi_1 (int a)
++{
++  return 0xF0F00000LLU;
++}
++
++unsigned long long
++movdi_2 (int a)
++{
++  return 0xF0F0000000000000LLU;
++}
++
++/* Accept r1 because big endian targets put the low bits in the highest
++   numbered register of a pair.  */
++/* { dg-final { scan-assembler-times "movt\tr\[01\], 61680" 2 } } */
+--- /dev/null
++++ b/src/gcc/testsuite/gcc.target/arm/movsi_movt.c
+@@ -0,0 +1,10 @@
++/* { dg-do compile { target { arm_cortex_m && { arm_thumb2_ok || arm_thumb1_movt_ok } } } } */
++/* { dg-options "-O2 -mslow-flash-data" } */
++
++unsigned
++movsi (void)
++{
++  return 0xF0F00000U;
++}
++
++/* { dg-final { scan-assembler-times "movt\tr0, 61680" 1 } } */
+--- a/src/gcc/testsuite/gcc.target/arm/pr69180.c
++++ b/src/gcc/testsuite/gcc.target/arm/pr69180.c
+@@ -8,9 +8,10 @@
+ #pragma GCC target ("fpu=neon-fp-armv8")
+ 
+ #define __ARM_NEON_FP 0
++/* { dg-warning ".__ARM_NEON_FP. redefined" "" { target *-*-* } .-1 }  */
++
+ #define __ARM_FP 0
+-#define __ARM_FEATURE_LDREX 0
++/* { dg-warning ".__ARM_FP. redefined" "" { target *-*-* } .-1 } */
+ 
+-/* { dg-warning ".__ARM_NEON_FP. redefined" "" { target *-*-* } 10 }  */
+-/* { dg-warning ".__ARM_FP. redefined" "" { target *-*-* } 11 } */
+-/* { dg-warning ".__ARM_FEATURE_LDREX. redefined" "" { target *-*-* } 12 } */
++#define __ARM_FEATURE_LDREX 0
++/* { dg-warning ".__ARM_FEATURE_LDREX. redefined" "" { target *-*-* } .-1 } */
+--- /dev/null
++++ b/src/gcc/testsuite/gcc.target/arm/sdiv_costs_1.c
+@@ -0,0 +1,38 @@
++/* { dg-do compile } */
++/* { dg-options "-O3 -march=armv8-a" } */
++
++/* Both sdiv and udiv can be used here, so prefer udiv.  */
++int f1 (unsigned char *p)
++{
++  return 100 / p[1];
++}
++
++int f2 (unsigned char *p, unsigned short x)
++{
++  return x / p[0];
++}
++
++int f3 (unsigned char *p, int x)
++{
++  x &= 0x7fffffff;
++  return x / p[0];
++}
++
++int f5 (unsigned char *p, unsigned short x)
++{
++  return x % p[0];
++}
++
++/* This should only generate signed divisions.  */
++int f4 (unsigned char *p)
++{
++  return -100 / p[1];
++}
++
++int f6 (unsigned char *p, short x)
++{
++  return x % p[0];
++}
++
++/* { dg-final { scan-assembler-times "udiv\tr\[0-9\]+, r\[0-9\]+, r\[0-9\]+" 4 } } */
++/* { dg-final { scan-assembler-times "sdiv\tr\[0-9\]+, r\[0-9\]+, r\[0-9\]+" 2 } } */
+--- a/src/gcc/testsuite/gcc.target/arm/stack-checking.c
++++ b/src/gcc/testsuite/gcc.target/arm/stack-checking.c
+@@ -1,6 +1,6 @@
+ /* { dg-do run { target { *-*-linux* } } } */
++/* { dg-require-stack-check "" } */
+ /* { dg-options "-fstack-check" } */
+-/* { dg-skip-if "" { arm_thumb1 } } */
+ 
+ int main(void)
+ {
+--- /dev/null
++++ b/src/gcc/testsuite/gcc.target/arm/thumb2-slow-flash-data-1.c
+@@ -0,0 +1,73 @@
++/* The option -mslow-flash-data is just for performance tuning, it
++   doesn't totally disable the use of literal pools.  But for below
++   simple cases, the use of literal pool should be replaced by
++   movw/movt or read-only constant pool.  */
++
++/* { dg-do compile } */
++/* { dg-require-effective-target arm_cortex_m } */
++/* { dg-require-effective-target arm_thumb2_ok } */
++/* { dg-options "-O2 -mthumb -mslow-flash-data" } */
++
++float sf;
++double df;
++long long l;
++static char *p = "Hello World";
++
++float
++testsf (float *p)
++{
++  if (*p > 1.1234f)
++    return 2.1234f;
++  else
++    return 3.1234f;
++}
++
++double
++testdf (double *p)
++{
++  if (*p > 4.1234)
++    return 2.1234;
++  else
++    return 3.1234;
++}
++
++long long
++testll (long long *p)
++{
++  if (*p > 0x123456789ABCDEFll)
++    return 0x111111111ll;
++  else
++    return 0x222222222ll;
++}
++
++char *
++testchar ()
++{
++  return p + 4;
++}
++
++int
++foo (int a, int b)
++{
++  int i;
++  volatile int *labelref = &&label1;
++
++  if (a > b)
++    {
++      while (i < b)
++	{
++	  a += *labelref;
++	  i += 1;
++	}
++      goto *labelref;
++    }
++  else
++    b = b + 3;
++
++  a = a * b;
++
++label1:
++  return a + b;
++}
++
++/* { dg-final { scan-assembler-not "\\.(float|l\\?double|\d?byte|short|int|long|quad|word)\\s+\[^.\]" } } */
+--- a/src/gcc/testsuite/gcc.target/arm/thumb2-slow-flash-data.c
++++ b/src//dev/null
+@@ -1,73 +0,0 @@
+-/* The option -mslow-flash-data is just for performance tuning, it
+-   doesn't totally disable the use of literal pools.  But for below
+-   simple cases, the use of literal pool should be replaced by
+-   movw/movt or read-only constant pool.  */
+-
+-/* { dg-do compile } */
+-/* { dg-require-effective-target arm_cortex_m } */
+-/* { dg-require-effective-target arm_thumb2_ok } */
+-/* { dg-options "-O2 -mthumb -mslow-flash-data" } */
+-
+-float sf;
+-double df;
+-long long l;
+-static char *p = "Hello World";
+-
+-float
+-testsf (float *p)
+-{
+-  if (*p > 1.1234f)
+-    return 2.1234f;
+-  else
+-    return 3.1234f;
+-}
+-
+-double
+-testdf (double *p)
+-{
+-  if (*p > 4.1234)
+-    return 2.1234;
+-  else
+-    return 3.1234;
+-}
+-
+-long long
+-testll (long long *p)
+-{
+-  if (*p > 0x123456789ABCDEFll)
+-    return 0x111111111ll;
+-  else
+-    return 0x222222222ll;
+-}
+-
+-char *
+-testchar ()
+-{
+-  return p + 4;
+-}
+-
+-int
+-foo (int a, int b)
+-{
+-  int i;
+-  volatile int *labelref = &&label1;
+-
+-  if (a > b)
+-    {
+-      while (i < b)
+-	{
+-	  a += *labelref;
+-	  i += 1;
+-	}
+-      goto *labelref;
+-    }
+-  else
+-    b = b + 3;
+-
+-  a = a * b;
+-
+-label1:
+-  return a + b;
+-}
+-
+-/* { dg-final { scan-assembler-not "\\.(float|l\\?double|\d?byte|short|int|long|quad|word)\\s+\[^.\]" } } */
+--- a/src/gcc/testsuite/gcc.target/i386/pr48723.c
++++ b/src/gcc/testsuite/gcc.target/i386/pr48723.c
+@@ -1,4 +1,5 @@
+ /* { dg-do compile } */
++/* { dg-require-stack-check "" } */
+ /* { dg-options "-fstack-check -mavx" } */
+ 
+ struct S0
+--- a/src/gcc/testsuite/gcc.target/i386/pr55672.c
++++ b/src/gcc/testsuite/gcc.target/i386/pr55672.c
+@@ -1,4 +1,5 @@
+ /* { dg-do compile } */
++/* { dg-require-stack-check "generic" } */
+ /* { dg-options "-O -fstack-check=generic" } */
+ 
+ int main ()
+--- a/src/gcc/testsuite/gcc.target/i386/pr67265-2.c
++++ b/src/gcc/testsuite/gcc.target/i386/pr67265-2.c
+@@ -1,4 +1,5 @@
+ /* { dg-do compile } */
++/* { dg-require-stack-check "" } */
+ /* { dg-options "-O -fstack-check" } */
+ 
+ void foo (int n)
+--- a/src/gcc/testsuite/gcc.target/i386/pr67265.c
++++ b/src/gcc/testsuite/gcc.target/i386/pr67265.c
+@@ -2,6 +2,7 @@
+ /* Reduced testcase by Johannes Dewender <gnu@JonnyJD.net> */
+ 
+ /* { dg-do compile } */
++/* { dg-require-stack-check "" } */
+ /* { dg-options "-O -fstack-check -fPIC" } */
+ 
+ int a, b, c, d, e;
+--- a/src/gcc/testsuite/gnat.dg/opt49.adb
++++ b/src/gcc/testsuite/gnat.dg/opt49.adb
+@@ -1,4 +1,5 @@
+ -- { dg-do run }
++-- { dg-require-stack-check "" }
+ -- { dg-options "-O -fstack-check" }
+ 
+ procedure Opt49 is
+--- a/src/gcc/testsuite/gnat.dg/stack_check1.adb
++++ b/src/gcc/testsuite/gnat.dg/stack_check1.adb
+@@ -1,4 +1,5 @@
+ -- { dg-do run }
++-- { dg-require-stack-check "" }
+ -- { dg-options "-fstack-check" }
+ 
+ -- This test requires architecture- and OS-specific support code for unwinding
+--- a/src/gcc/testsuite/gnat.dg/stack_check2.adb
++++ b/src/gcc/testsuite/gnat.dg/stack_check2.adb
+@@ -1,4 +1,5 @@
+ -- { dg-do run }
++-- { dg-require-stack-check "" }
+ -- { dg-options "-fstack-check" }
+ 
+ -- This test requires architecture- and OS-specific support code for unwinding
+--- a/src/gcc/testsuite/gnat.dg/stack_check3.adb
++++ b/src/gcc/testsuite/gnat.dg/stack_check3.adb
+@@ -1,4 +1,5 @@
+ -- { dg-do compile }
++-- { dg-require-stack-check "" }
+ -- { dg-options "-O -fstack-check" }
+ 
+ package body Stack_Check3 is
+--- a/src/gcc/testsuite/lib/target-supports-dg.exp
++++ b/src/gcc/testsuite/lib/target-supports-dg.exp
+@@ -265,6 +265,21 @@ proc dg-require-linker-plugin { args } {
+     }
+ }
+ 
++# If this target does not support the "stack-check" option, skip this
++# test.
++
++proc dg-require-stack-check { args } {
++    set stack_check_available [ check_stack_check_available [lindex $args 1 ] ]
++    if { $stack_check_available == -1 } {
++	upvar name name
++	unresolved "$name"
++    }
++    if { $stack_check_available != 1 } {
++	upvar dg-do-what dg-do-what
++	set dg-do-what [list [lindex ${dg-do-what} 0] "N" "P"]
++    }
++}
++
+ # Add any target-specific flags needed for accessing the given list
+ # of features.  This must come after all dg-options.
+ 
+--- a/src/gcc/testsuite/lib/target-supports.exp
++++ b/src/gcc/testsuite/lib/target-supports.exp
+@@ -1029,6 +1029,17 @@ proc check_effective_target_fstack_protector {} {
+     } "-fstack-protector"]
+ }
+ 
++# Return 1 if the target supports -fstack-check or -fstack-check=$stack_kind
++proc check_stack_check_available { stack_kind } {
++    if [string match "" $stack_kind] then {
++	set stack_opt "-fstack-check"
++    } else { set stack_opt "-fstack-check=$stack_kind" }
++
++    return [check_no_compiler_messages stack_check executable {
++	int main (void) { return 0; }
++    } "$stack_opt"]
++}
++
+ # Return 1 if compilation with -freorder-blocks-and-partition is error-free
+ # for trivial code, 0 otherwise.  As some targets (ARM for example) only
+ # warn when -fprofile-use is also supplied we test that combination too.
+--- a/src/gcc/tree-ssa-dce.c
++++ b/src/gcc/tree-ssa-dce.c
+@@ -233,6 +233,8 @@ mark_stmt_if_obviously_necessary (gimple *stmt, bool aggressive)
+ 	    case BUILT_IN_CALLOC:
+ 	    case BUILT_IN_ALLOCA:
+ 	    case BUILT_IN_ALLOCA_WITH_ALIGN:
++	    case BUILT_IN_STRDUP:
++	    case BUILT_IN_STRNDUP:
+ 	      return;
+ 
+ 	    default:;
+--- a/src/gcc/tree-ssa-loop-prefetch.c
++++ b/src/gcc/tree-ssa-loop-prefetch.c
+@@ -48,6 +48,7 @@ along with GCC; see the file COPYING3.  If not see
+ #include "tree-inline.h"
+ #include "tree-data-ref.h"
+ #include "diagnostic-core.h"
++#include "dbgcnt.h"
+ 
+ /* This pass inserts prefetch instructions to optimize cache usage during
+    accesses to arrays in loops.  It processes loops sequentially and:
+@@ -227,6 +228,7 @@ struct mem_ref_group
+   tree step;			/* Step of the reference.  */
+   struct mem_ref *refs;		/* References in the group.  */
+   struct mem_ref_group *next;	/* Next group of references.  */
++  unsigned int uid;		/* Group UID, used only for debugging.  */
+ };
+ 
+ /* Assigned to PREFETCH_BEFORE when all iterations are to be prefetched.  */
+@@ -269,6 +271,7 @@ struct mem_ref
+   unsigned reuse_distance;	/* The amount of data accessed before the first
+ 				   reuse of this value.  */
+   struct mem_ref *next;		/* The next reference in the group.  */
++  unsigned int uid;		/* Ref UID, used only for debugging.  */
+   unsigned write_p : 1;		/* Is it a write?  */
+   unsigned independent_p : 1;	/* True if the reference is independent on
+ 				   all other references inside the loop.  */
+@@ -290,11 +293,8 @@ dump_mem_details (FILE *file, tree base, tree step,
+   else
+     print_generic_expr (file, step, TDF_TREE);
+   fprintf (file, ")\n");
+-  fprintf (file, "  delta ");
+-  fprintf (file, HOST_WIDE_INT_PRINT_DEC, delta);
+-  fprintf (file, "\n");
+-  fprintf (file, "  %s\n", write_p ? "write" : "read");
+-  fprintf (file, "\n");
++  fprintf (file, "  delta " HOST_WIDE_INT_PRINT_DEC "\n", delta);
++  fprintf (file, "  %s\n\n", write_p ? "write" : "read");
+ }
+ 
+ /* Dumps information about reference REF to FILE.  */
+@@ -302,12 +302,9 @@ dump_mem_details (FILE *file, tree base, tree step,
+ static void
+ dump_mem_ref (FILE *file, struct mem_ref *ref)
+ {
+-  fprintf (file, "Reference %p:\n", (void *) ref);
+-
+-  fprintf (file, "  group %p ", (void *) ref->group);
+-
+-  dump_mem_details (file, ref->group->base, ref->group->step, ref->delta,
+-                   ref->write_p);
++  fprintf (file, "reference %u:%u (", ref->group->uid, ref->uid);
++  print_generic_expr (file, ref->mem, TDF_SLIM);
++  fprintf (file, ")\n");
+ }
+ 
+ /* Finds a group with BASE and STEP in GROUPS, or creates one if it does not
+@@ -316,6 +313,9 @@ dump_mem_ref (FILE *file, struct mem_ref *ref)
+ static struct mem_ref_group *
+ find_or_create_group (struct mem_ref_group **groups, tree base, tree step)
+ {
++  /* Global count for setting struct mem_ref_group->uid.  */
++  static unsigned int last_mem_ref_group_uid = 0;
++
+   struct mem_ref_group *group;
+ 
+   for (; *groups; groups = &(*groups)->next)
+@@ -335,6 +335,7 @@ find_or_create_group (struct mem_ref_group **groups, tree base, tree step)
+   group->base = base;
+   group->step = step;
+   group->refs = NULL;
++  group->uid = ++last_mem_ref_group_uid;
+   group->next = *groups;
+   *groups = group;
+ 
+@@ -348,11 +349,14 @@ static void
+ record_ref (struct mem_ref_group *group, gimple *stmt, tree mem,
+ 	    HOST_WIDE_INT delta, bool write_p)
+ {
++  unsigned int last_mem_ref_uid = 0;
+   struct mem_ref **aref;
+ 
+   /* Do not record the same address twice.  */
+   for (aref = &group->refs; *aref; aref = &(*aref)->next)
+     {
++      last_mem_ref_uid = (*aref)->uid;
++
+       /* It does not have to be possible for write reference to reuse the read
+ 	 prefetch, or vice versa.  */
+       if (!WRITE_CAN_USE_READ_PREFETCH
+@@ -381,9 +385,16 @@ record_ref (struct mem_ref_group *group, gimple *stmt, tree mem,
+   (*aref)->next = NULL;
+   (*aref)->independent_p = false;
+   (*aref)->storent_p = false;
++  (*aref)->uid = last_mem_ref_uid + 1;
+ 
+   if (dump_file && (dump_flags & TDF_DETAILS))
+-    dump_mem_ref (dump_file, *aref);
++    {
++      dump_mem_ref (dump_file, *aref);
++
++      fprintf (dump_file, "  group %u ", group->uid);
++      dump_mem_details (dump_file, group->base, group->step, delta,
++			write_p);
++    }
+ }
+ 
+ /* Release memory references in GROUPS.  */
+@@ -938,7 +949,7 @@ prune_group_by_reuse (struct mem_ref_group *group)
+ 
+       if (dump_file && (dump_flags & TDF_DETAILS))
+ 	{
+-	  fprintf (dump_file, "Reference %p:", (void *) ref_pruned);
++	  dump_mem_ref (dump_file, ref_pruned);
+ 
+ 	  if (ref_pruned->prefetch_before == PREFETCH_ALL
+ 	      && ref_pruned->prefetch_mod == 1)
+@@ -986,8 +997,8 @@ should_issue_prefetch_p (struct mem_ref *ref)
+   if (ref->prefetch_before != PREFETCH_ALL)
+     {
+       if (dump_file && (dump_flags & TDF_DETAILS))
+-        fprintf (dump_file, "Ignoring %p due to prefetch_before\n",
+-		 (void *) ref);
++        fprintf (dump_file, "Ignoring reference %u:%u due to prefetch_before\n",
++		 ref->group->uid, ref->uid);
+       return false;
+     }
+ 
+@@ -995,7 +1006,7 @@ should_issue_prefetch_p (struct mem_ref *ref)
+   if (ref->storent_p)
+     {
+       if (dump_file && (dump_flags & TDF_DETAILS))
+-        fprintf (dump_file, "Ignoring nontemporal store %p\n", (void *) ref);
++        fprintf (dump_file, "Ignoring nontemporal store reference %u:%u\n", ref->group->uid, ref->uid);
+       return false;
+     }
+ 
+@@ -1058,7 +1069,14 @@ schedule_prefetches (struct mem_ref_group *groups, unsigned unroll_factor,
+ 	if (2 * remaining_prefetch_slots < prefetch_slots)
+ 	  continue;
+ 
++	/* Stop prefetching if debug counter is activated.  */
++	if (!dbg_cnt (prefetch))
++	  continue;
++
+ 	ref->issue_prefetch_p = true;
++	if (dump_file && (dump_flags & TDF_DETAILS))
++	  fprintf (dump_file, "Decided to issue prefetch for reference %u:%u\n",
++		   ref->group->uid, ref->uid);
+ 
+ 	if (remaining_prefetch_slots <= prefetch_slots)
+ 	  return true;
+@@ -1122,9 +1140,9 @@ issue_prefetch_ref (struct mem_ref *ref, unsigned unroll_factor, unsigned ahead)
+   bool nontemporal = ref->reuse_distance >= L2_CACHE_SIZE_BYTES;
+ 
+   if (dump_file && (dump_flags & TDF_DETAILS))
+-    fprintf (dump_file, "Issued%s prefetch for %p.\n",
++    fprintf (dump_file, "Issued%s prefetch for reference %u:%u.\n",
+ 	     nontemporal ? " nontemporal" : "",
+-	     (void *) ref);
++	     ref->group->uid, ref->uid);
+ 
+   bsi = gsi_for_stmt (ref->stmt);
+ 
+@@ -1144,8 +1162,8 @@ issue_prefetch_ref (struct mem_ref *ref, unsigned unroll_factor, unsigned ahead)
+           delta = (ahead + ap * ref->prefetch_mod) *
+ 		   int_cst_value (ref->group->step);
+           addr = fold_build_pointer_plus_hwi (addr_base, delta);
+-          addr = force_gimple_operand_gsi (&bsi, unshare_expr (addr), true, NULL,
+-                                           true, GSI_SAME_STMT);
++          addr = force_gimple_operand_gsi (&bsi, unshare_expr (addr), true,
++					   NULL, true, GSI_SAME_STMT);
+         }
+       else
+         {
+@@ -1229,8 +1247,8 @@ mark_nontemporal_store (struct mem_ref *ref)
+     return false;
+ 
+   if (dump_file && (dump_flags & TDF_DETAILS))
+-    fprintf (dump_file, "Marked reference %p as a nontemporal store.\n",
+-	     (void *) ref);
++    fprintf (dump_file, "Marked reference %u:%u as a nontemporal store.\n",
++	     ref->group->uid, ref->uid);
+ 
+   gimple_assign_set_nontemporal_move (ref->stmt, true);
+   ref->storent_p = true;
+@@ -1340,7 +1358,7 @@ should_unroll_loop_p (struct loop *loop, struct tree_niter_desc *desc,
+ 
+ /* Determine the coefficient by that unroll LOOP, from the information
+    contained in the list of memory references REFS.  Description of
+-   umber of iterations of LOOP is stored to DESC.  NINSNS is the number of
++   number of iterations of LOOP is stored to DESC.  NINSNS is the number of
+    insns of the LOOP.  EST_NITER is the estimated number of iterations of
+    the loop, or -1 if no estimate is available.  */
+ 
+@@ -1715,8 +1733,8 @@ determine_loop_nest_reuse (struct loop *loop, struct mem_ref_group *refs,
+       fprintf (dump_file, "Reuse distances:\n");
+       for (gr = refs; gr; gr = gr->next)
+ 	for (ref = gr->refs; ref; ref = ref->next)
+-	  fprintf (dump_file, " ref %p distance %u\n",
+-		   (void *) ref, ref->reuse_distance);
++	  fprintf (dump_file, " reference %u:%u distance %u\n",
++		   ref->group->uid, ref->uid, ref->reuse_distance);
+     }
+ 
+   return true;
+--- a/src/libgcc/config.host
++++ b/src/libgcc/config.host
+@@ -231,6 +231,10 @@ case ${host} in
+       ;;
+   esac
+   ;;
++*-*-fuchsia*)
++  tmake_file="$tmake_file t-crtstuff-pic t-libgcc-pic t-eh-dw2-dip t-slibgcc t-slibgcc-fuchsia"
++  extra_parts="crtbegin.o crtend.o"
++  ;;
+ *-*-linux* | frv-*-*linux* | *-*-kfreebsd*-gnu | *-*-gnu* | *-*-kopensolaris*-gnu)
+   tmake_file="$tmake_file t-crtstuff-pic t-libgcc-pic t-eh-dw2-dip t-slibgcc t-slibgcc-gld t-slibgcc-elf-ver t-linux"
+   extra_parts="crtbegin.o crtbeginS.o crtbeginT.o crtend.o crtendS.o"
+@@ -342,6 +346,10 @@ aarch64*-*-freebsd*)
+ 	tmake_file="${tmake_file} ${cpu_type}/t-softfp t-softfp t-crtfm"
+ 	md_unwind_header=aarch64/freebsd-unwind.h
+ 	;;
++aarch64*-*-fuchsia*)
++	tmake_file="${tmake_file} ${cpu_type}/t-aarch64"
++	tmake_file="${tmake_file} ${cpu_type}/t-softfp t-softfp"
++	;;
+ aarch64*-*-linux*)
+ 	extra_parts="$extra_parts crtfastmath.o"
+ 	md_unwind_header=aarch64/linux-unwind.h
+@@ -394,6 +402,12 @@ arm*-*-freebsd*)                # ARM FreeBSD EABI
+ 	unwind_header=config/arm/unwind-arm.h
+ 	tmake_file="${tmake_file} t-softfp-sfdf t-softfp-excl arm/t-softfp t-softfp"
+ 	;;
++arm*-*-fuchsia*)
++	tmake_file="${tmake_file} arm/t-arm arm/t-elf arm/t-bpabi"
++	tmake_file="${tmake_file} arm/tsoftfp t-softfp"
++	tm_file="${tm_file} arm/bpabi-lib.h"
++	unwind_header=config/arm/unwind-arm.h
++	;;
+ arm*-*-netbsdelf*)
+ 	tmake_file="$tmake_file arm/t-arm arm/t-netbsd t-slibgcc-gld-nover"
+ 	;;
+@@ -588,6 +602,9 @@ i[34567]86-*-elf*)
+ x86_64-*-elf* | x86_64-*-rtems*)
+ 	tmake_file="$tmake_file i386/t-crtstuff t-crtstuff-pic t-libgcc-pic"
+ 	;;
++x86_64-*-fuchsia*)
++	tmake_file="$tmake_file t-libgcc-pic"
++	;;
+ i[34567]86-*-dragonfly*)
+ 	tmake_file="${tmake_file} i386/t-dragonfly i386/t-crtstuff"
+ 	md_unwind_header=i386/dragonfly-unwind.h
+--- a/src/libgcc/config/arm/unwind-arm.h
++++ b/src/libgcc/config/arm/unwind-arm.h
+@@ -49,7 +49,7 @@ extern "C" {
+ 	return 0;
+ 
+ #if (defined(linux) && !defined(__uClinux__)) || defined(__NetBSD__) \
+-    || defined(__FreeBSD__)
++    || defined(__FreeBSD__) || defined(__fuchsia__)
+       /* Pc-relative indirect.  */
+ #define _GLIBCXX_OVERRIDE_TTYPE_ENCODING (DW_EH_PE_pcrel | DW_EH_PE_indirect)
+       tmp += ptr;
+--- /dev/null
++++ b/src/libgcc/config/t-slibgcc-fuchsia
+@@ -0,0 +1,44 @@
++# Copyright (C) 2017 Free Software Foundation, Inc.
++#
++# This file is part of GCC.
++#
++# GCC is free software; you can redistribute it and/or modify
++# it under the terms of the GNU General Public License as published by
++# the Free Software Foundation; either version 3, or (at your option)
++# any later version.
++#
++# GCC is distributed in the hope that it will be useful,
++# but WITHOUT ANY WARRANTY; without even the implied warranty of
++# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++# GNU General Public License for more details.
++#
++# You should have received a copy of the GNU General Public License
++# along with GCC; see the file COPYING3.  If not see
++# <http://www.gnu.org/licenses/>.
++
++# Fuchsia-specific shared library overrides.
++
++SHLIB_LDFLAGS = -Wl,--soname=$(SHLIB_SONAME) \
++                $(LDFLAGS)
++# Copyright (C) 2017 Free Software Foundation, Inc.
++#
++# This file is part of GCC.
++#
++# GCC is free software; you can redistribute it and/or modify
++# it under the terms of the GNU General Public License as published by
++# the Free Software Foundation; either version 3, or (at your option)
++# any later version.
++#
++# GCC is distributed in the hope that it will be useful,
++# but WITHOUT ANY WARRANTY; without even the implied warranty of
++# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++# GNU General Public License for more details.
++#
++# You should have received a copy of the GNU General Public License
++# along with GCC; see the file COPYING3.  If not see
++# <http://www.gnu.org/licenses/>.
++
++# Fuchsia-specific shared library overrides.
++
++SHLIB_LDFLAGS = -Wl,--soname=$(SHLIB_SONAME) \
++                $(LDFLAGS)

@@ -1,3 +1,22 @@
+gcc-7 (7.1.0-10) unstable; urgency=medium
+
+  * Update to SVN 20170722 (r250453) from the gcc-7-branch.
+
+  [ Nicolas Boulenguez ]
+  * libgnatvsn: embed xutil rident for version 2017 of asis package.
+
+  [ Matthias Klose ]
+  * Fix gnat cross build on m68k (Adrian Glaubitz). Closes: #862927.
+  * Enable gnat cross build on m68k. Closes: #868365.
+  * Update the Linaro support to the 7-2017.07 snapshot.
+  * Stop ignoring symbol mismatches for runtime libraries.
+
+  [ Aurelien Jarno ]
+  * libgo-s390x-default-isa.diff: do not build libgo with -march=z196,
+    use the default ISA instead.
+
+ -- Matthias Klose <doko@debian.org>  Sat, 22 Jul 2017 15:06:36 +0200
+
 gcc-7 (7.1.0-9+rpi1) buster-staging; urgency=medium
 
  -- Raspbian forward porter <root@raspbian.org>  Thu, 20 Jul 2017 18:14:15 +0000

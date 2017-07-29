@@ -277,7 +277,7 @@ else
   cross_gencontrol :=
   cross_makeshlibs :=
   # FIXME: Ignore missing symbols for a first build ...
-  cross_makeshlibs := -
+  #cross_makeshlibs := -
   cross_clean :=
 endif
 
@@ -641,7 +641,9 @@ ifeq (,$(filter $(DEB_STAGE),stage1 stage2))
 # Ada --------------------
 ada_no_cpus	:= m32r sh3 sh3eb sh4eb arm
 # no Debian builds ... some of these should exist
-ada_no_cpus += m68k # see https://bugs.debian.org/814221
+ifneq (,$(filter $(build_type), build-native cross-build-native))
+  ada_no_cpus += m68k # see https://bugs.debian.org/868365
+endif
 ada_no_systems	:= 
 ada_no_cross	:= no
 ada_no_snap	:= no

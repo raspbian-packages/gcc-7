@@ -148,8 +148,8 @@
 +UNITS_BOTH := aspects atree casing csets debug einfo elists fname \
 +  gnatvsn krunch lib namet nlists opt output repinfo scans sem_aux \
 +  sinfo sinput stand stringt table tree_in tree_io types uintp \
-+  uname urealp widechar
-+UNITS_SPEC := alloc hostparm
++  uname urealp widechar xutil
++UNITS_SPEC := alloc hostparm rident
 +SEPARATES := lib-list lib-sort
 +ADA_SRC := $(addsuffix .ads, $(UNITS_BOTH) $(UNITS_SPEC)) \
 +           $(addsuffix .adb, $(UNITS_BOTH) $(SEPARATES))

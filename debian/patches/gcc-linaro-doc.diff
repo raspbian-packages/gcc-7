@@ -1,8 +1,8 @@
-# DP: Changes for the Linaro 7-2017.05 snapshot (documentation).
+# DP: Changes for the Linaro 7-2017.07 snapshot (documentation).
 
 --- a/src/gcc/doc/install.texi
 +++ b/src/gcc/doc/install.texi
-@@ -1092,14 +1092,18 @@ for each target is given below.
+@@ -1097,14 +1097,18 @@ for each target is given below.
  
  @table @code
  @item arm*-*-*
@@ -26,3 +26,46 @@
  
  @multitable @columnfractions .15 .28 .30
  @item Option @tab aprofile @tab rmprofile
+--- a/src/gcc/doc/sourcebuild.texi
++++ b/src/gcc/doc/sourcebuild.texi
+@@ -2274,6 +2274,11 @@ the codeset to convert to.
+ Skip the test if the target does not support profiling with option
+ @var{profopt}.
+ 
++@item dg-require-stack-check @var{check}
++Skip the test if the target does not support the @code{-fstack-check}
++option.  If @var{check} is @code{""}, support for @code{-fstack-check}
++is checked, for @code{-fstack-check=("@var{check}")} otherwise.
++
+ @item dg-require-visibility @var{vis}
+ Skip the test if the target does not support the @code{visibility} attribute.
+ If @var{vis} is @code{""}, support for @code{visibility("hidden")} is
+--- a/src/gcc/doc/tm.texi
++++ b/src/gcc/doc/tm.texi
+@@ -3684,6 +3684,15 @@ such as the result of @code{get_frame_size ()} and the tables of
+ registers @code{df_regs_ever_live_p} and @code{call_used_regs}.
+ @end defmac
+ 
++@deftypefn {Target Hook} void TARGET_COMPUTE_FRAME_LAYOUT (void)
++This target hook is called once each time the frame layout needs to be
++recalculated.  The calculations can be cached by the target and can then
++be used by @code{INITIAL_ELIMINATION_OFFSET} instead of re-computing the
++layout on every invocation of that hook.  This is particularly useful
++for targets that have an expensive frame layout function.  Implementing
++this callback is optional.
++@end deftypefn
++
+ @node Stack Arguments
+ @subsection Passing Function Arguments on the Stack
+ @cindex arguments on stack
+--- a/src/gcc/doc/tm.texi.in
++++ b/src/gcc/doc/tm.texi.in
+@@ -3213,6 +3213,8 @@ such as the result of @code{get_frame_size ()} and the tables of
+ registers @code{df_regs_ever_live_p} and @code{call_used_regs}.
+ @end defmac
+ 
++@hook TARGET_COMPUTE_FRAME_LAYOUT
++
+ @node Stack Arguments
+ @subsection Passing Function Arguments on the Stack
+ @cindex arguments on stack
