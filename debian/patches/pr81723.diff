@@ -1,0 +1,204 @@
+# DP: Fix PR tree-optimization/81723, taken from the trunk.
+
+gcc/
+
+2017-08-08  Richard Biener  <rguenther@suse.de>
+
+	PR tree-optimization/81723
+	* tree-vect-slp.c (struct bst_traits): New hash traits.
+	(bst_fail): New global.
+	(vect_build_slp_tree_2): New worker, split out from ...
+	(vect_build_slp_tree): ... this now wrapping it with using
+	bst_fail set to cache SLP tree build fails.  Properly handle
+	max_tree_size.
+	(vect_analyze_slp_instance): Allocate and free bst_fail.
+
+gcc/testsuite/
+
+2017-08-08  Richard Biener  <rguenther@suse.de>
+
+	PR tree-optimization/81723
+	* gfortran.dg/pr81723.f: New testcase.
+
+ 
+--- a/src/gcc/testsuite/gfortran.dg/pr81723.f
++++ a/src/gcc/testsuite/gfortran.dg/pr81723.f
+@@ -0,0 +1,56 @@
++! { dg-do compile }
++! { dg-options "-O3 -fno-automatic" }
++
++      FUNCTION WWERF(Z)
++
++      IMPLICIT DOUBLE PRECISION (A-H,O-Z)
++      COMPLEX*16 WWERF
++      COMPLEX*16 Z,ZH,R(37),S,T,V,W
++
++      PARAMETER (Z1 = 1, HF = Z1/2, Z10 = 10)
++      PARAMETER (C1 = 74/Z10, C2 = 83/Z10, C3 = Z10/32, C4 = 16/Z10)
++      PARAMETER (C = 1.12837 91670 95512 57D0, P = (2*C4)**33)
++
++      DOUBLE PRECISION GREAL,GIMAG,XARG,YARG
++      COMPLEX*16 ZARG,GCONJG,GCMPLX
++      GREAL( ZARG)=DREAL( ZARG)
++      GIMAG( ZARG)=DIMAG( ZARG)
++      GCONJG(ZARG)=DCONJG(ZARG)
++      GCMPLX(XARG,YARG)=DCMPLX(XARG,YARG)
++
++      X=Z
++      Y=GIMAG(Z)
++      XA=ABS(X)
++      YA=ABS(Y)
++      IF(YA .LT. C1 .AND. XA .LT. C2) THEN
++       ZH=GCMPLX(YA+C4,XA)
++       R(37)=0
++       DO 1 N = 36,1,-1
++       T=ZH+N*GCONJG(R(N+1))
++    1  R(N)=HF*T/(GREAL(T)**2+GIMAG(T)**2)
++       XL=P
++       S=0
++       DO 2 N = 33,1,-1
++       XL=C3*XL
++    2  S=R(N)*(S+XL)
++       V=C*S
++      ELSE
++       ZH=GCMPLX(YA,XA)
++       R(1)=0
++       DO 3 N = 9,1,-1
++       T=ZH+N*GCONJG(R(1))
++    3  R(1)=HF*T/(GREAL(T)**2+GIMAG(T)**2)
++       V=C*R(1)
++      END IF
++      IF(YA .EQ. 0) V=GCMPLX(EXP(-XA**2),GIMAG(V))
++      IF(Y .LT. 0) THEN
++       V=2*EXP(-GCMPLX(XA,YA)**2)-V
++       IF(X .GT. 0) V=GCONJG(V)
++      ELSE
++       IF(X .LT. 0) V=GCONJG(V)
++      END IF
++
++      WWERF=V
++
++      RETURN
++      END
+--- a/src/gcc/tree-vect-slp.c
++++ b/src/gcc/tree-vect-slp.c
+@@ -908,14 +908,51 @@
+   return true;
+ }
+ 
+-/* Recursively build an SLP tree starting from NODE.
+-   Fail (and return a value not equal to zero) if def-stmts are not
+-   isomorphic, require data permutation or are of unsupported types of
+-   operation.  Otherwise, return 0.
+-   The value returned is the depth in the SLP tree where a mismatch
+-   was found.  */
++/* Traits for the hash_set to record failed SLP builds for a stmt set.
++   Note we never remove apart from at destruction time so we do not
++   need a special value for deleted that differs from empty.  */
++struct bst_traits
++{
++  typedef vec <gimple *> value_type;
++  typedef vec <gimple *> compare_type;
++  static inline hashval_t hash (value_type);
++  static inline bool equal (value_type existing, value_type candidate);
++  static inline bool is_empty (value_type x) { return !x.exists (); }
++  static inline bool is_deleted (value_type x) { return !x.exists (); }
++  static inline void mark_empty (value_type &x) { x.release (); }
++  static inline void mark_deleted (value_type &x) { x.release (); }
++  static inline void remove (value_type &x) { x.release (); }
++};
++inline hashval_t
++bst_traits::hash (value_type x)
++{
++  inchash::hash h;
++  for (unsigned i = 0; i < x.length (); ++i)
++    h.add_int (gimple_uid (x[i]));
++  return h.end ();
++}
++inline bool
++bst_traits::equal (value_type existing, value_type candidate)
++{
++  if (existing.length () != candidate.length ())
++    return false;
++  for (unsigned i = 0; i < existing.length (); ++i)
++    if (existing[i] != candidate[i])
++      return false;
++  return true;
++}
+ 
++static hash_set <vec <gimple *>, bst_traits> *bst_fail;
++
+ static slp_tree
++vect_build_slp_tree_2 (vec_info *vinfo,
++		       vec<gimple *> stmts, unsigned int group_size,
++		       unsigned int *max_nunits,
++		       vec<slp_tree> *loads,
++		       bool *matches, unsigned *npermutes, unsigned *tree_size,
++		       unsigned max_tree_size);
++
++static slp_tree
+ vect_build_slp_tree (vec_info *vinfo,
+                      vec<gimple *> stmts, unsigned int group_size,
+                      unsigned int *max_nunits,
+@@ -923,6 +960,39 @@
+ 		     bool *matches, unsigned *npermutes, unsigned *tree_size,
+ 		     unsigned max_tree_size)
+ {
++  if (bst_fail->contains (stmts))
++    return NULL;
++  slp_tree res = vect_build_slp_tree_2 (vinfo, stmts, group_size, max_nunits,
++					loads, matches, npermutes, tree_size,
++					max_tree_size);
++  /* When SLP build fails for stmts record this, otherwise SLP build
++     can be exponential in time when we allow to construct parts from
++     scalars, see PR81723.  */
++  if (! res)
++    {
++      vec <gimple *> x;
++      x.create (stmts.length ());
++      x.splice (stmts);
++      bst_fail->add (x);
++    }
++  return res;
++}
++
++/* Recursively build an SLP tree starting from NODE.
++   Fail (and return a value not equal to zero) if def-stmts are not
++   isomorphic, require data permutation or are of unsupported types of
++   operation.  Otherwise, return 0.
++   The value returned is the depth in the SLP tree where a mismatch
++   was found.  */
++
++static slp_tree
++vect_build_slp_tree_2 (vec_info *vinfo,
++		       vec<gimple *> stmts, unsigned int group_size,
++		       unsigned int *max_nunits,
++		       vec<slp_tree> *loads,
++		       bool *matches, unsigned *npermutes, unsigned *tree_size,
++		       unsigned max_tree_size)
++{
+   unsigned nops, i, this_tree_size = 0, this_max_nunits = *max_nunits;
+   gimple *stmt;
+   slp_tree node;
+@@ -1014,6 +1084,9 @@
+ 
+   stmt = stmts[0];
+ 
++  if (tree_size)
++    max_tree_size -= *tree_size;
++
+   /* Create SLP_TREE nodes for the definition node/s.  */
+   FOR_EACH_VEC_ELT (oprnds_info, i, oprnd_info)
+     {
+@@ -1933,9 +2006,11 @@
+   /* Build the tree for the SLP instance.  */
+   bool *matches = XALLOCAVEC (bool, group_size);
+   unsigned npermutes = 0;
++  bst_fail = new hash_set <vec <gimple *>, bst_traits> ();
+   node = vect_build_slp_tree (vinfo, scalar_stmts, group_size,
+ 				   &max_nunits, &loads, matches, &npermutes,
+ 			      NULL, max_tree_size);
++  delete bst_fail;
+   if (node != NULL)
+     {
+       /* Calculate the unrolling factor based on the smallest type.  */
