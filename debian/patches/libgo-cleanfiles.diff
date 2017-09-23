@@ -1,0 +1,31 @@
+Index: gcc-7-7.2.0/src/libgo/Makefile.am
+===================================================================
+--- gcc-7-7.2.0.orig/src/libgo/Makefile.am
++++ gcc-7-7.2.0/src/libgo/Makefile.am
+@@ -1423,7 +1423,9 @@ mostlyclean-local:
+ 	find . -name '*-testsum' -print | xargs rm -f
+ 	find . -name '*-testlog' -print | xargs rm -f
+ 
+-CLEANFILES = *.go *.gox goc2c *.c s-version libgo.sum libgo.log
++CLEANFILES = *.go *.gox goc2c *.c s-* libgo.sum libgo.log \
++	*.dep */*.dep */*/*.dep */*/*/*.dep */*/*.dep */*/*/*/*.dep \
++	*/*/*/*/*/*.dep
+ 
+ clean-local:
+ 	find . -name '*.la' -print | xargs $(LIBTOOL) --mode=clean rm -f
+Index: gcc-7-7.2.0/src/libgo/Makefile.in
+===================================================================
+--- gcc-7-7.2.0.orig/src/libgo/Makefile.in
++++ gcc-7-7.2.0/src/libgo/Makefile.in
+@@ -1347,7 +1347,10 @@ TEST_PACKAGES = \
+ 	unicode/utf8/check
+ 
+ MOSTLYCLEAN_FILES = libgo.head libgo.sum.sep libgo.log.sep
+-CLEANFILES = *.go *.gox goc2c *.c s-version libgo.sum libgo.log
++CLEANFILES = *.go *.gox goc2c *.c s-* libgo.sum libgo.log \
++	*.dep */*.dep */*/*.dep */*/*/*.dep */*/*.dep */*/*/*/*.dep \
++	*/*/*/*/*/*.dep
++
+ all: config.h
+ 	$(MAKE) $(AM_MAKEFLAGS) all-recursive
+ 
