@@ -1,0 +1,24 @@
+# Mask __float128 types from CUDA compilers (LP: #1717257)
+
+--- a/src/libstdc++-v3/include/std/type_traits	2017-10-14 14:26:53.293407511 -0600
++++ b/src/libstdc++-v3/include/std/type_traits	2017-10-14 14:31:37.857848519 -0600
+@@ -345,7 +345,7 @@
+     struct __is_floating_point_helper<long double>
+     : public true_type { };
+ 
+-#if !defined(__STRICT_ANSI__) && defined(_GLIBCXX_USE_FLOAT128)
++#if !defined(__STRICT_ANSI__) && defined(_GLIBCXX_USE_FLOAT128) && !defined(__CUDACC__)
+   template<>
+     struct __is_floating_point_helper<__float128>
+     : public true_type { };
+--- a/src/libstdc++-v3/include/bits/std_abs.h	2017-01-01 05:07:43.905435000 -0700
++++ b/src/libstdc++-v3/include/bits/std_abs.h	2017-10-14 14:31:56.251812105 -0600
+@@ -96,7 +96,7 @@
+   abs(__GLIBCXX_TYPE_INT_N_3 __x) { return __x >= 0 ? __x : -__x; }
+ #endif
+ 
+-#if !defined(__STRICT_ANSI__) && defined(_GLIBCXX_USE_FLOAT128)
++#if !defined(__STRICT_ANSI__) && defined(_GLIBCXX_USE_FLOAT128) && !defined(__CUDACC__)
+   inline _GLIBCXX_CONSTEXPR
+   __float128
+   abs(__float128 __x)
