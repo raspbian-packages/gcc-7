@@ -1,0 +1,19 @@
+# DP: Store basename only in gfortran .mod files
+
+2018-02-07 Alastair McKinstry  <mckinstry@debian.org>
+
+	* module.c (dump_module): Store basename only in gfortran .mod files.
+
+--- a/src/gcc/fortran/module.c
++++ b/src/gcc/fortran/module.c
+@@ -6063,8 +6063,9 @@
+     gfc_fatal_error ("Can't open module file %qs for writing at %C: %s",
+ 		     filename_tmp, xstrerror (errno));
+ 
++  /* Store basename only in gfortran .mod files.  */
+   gzprintf (module_fp, "GFORTRAN module version '%s' created from %s\n",
+-	    MOD_VERSION, gfc_source_file);
++	    MOD_VERSION, lbasename(gfc_source_file));
+ 
+   /* Write the module itself.  */
+   iomode = IO_OUTPUT;

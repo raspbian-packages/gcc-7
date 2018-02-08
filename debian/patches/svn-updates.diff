@@ -1,0 +1,2519 @@
+# DP: updates from the 7 branch upto 20180208 (r257477).
+
+last_update()
+{
+	cat > ${dir}LAST_UPDATED <EOF
+Thu Feb  8 09:03:29 CET 2018
+Thu Feb  8 08:03:29 UTC 2018 (revision 257477)
+EOF
+}
+
+LANG=C svn diff svn://gcc.gnu.org/svn/gcc/tags/gcc_7_3_0_release svn://gcc.gnu.org/svn/gcc/branches/gcc-7-branch \
+	| sed -r 's,^--- (\S+)\t(\S+)(.*)$,--- a/src/\1\t\2,;s,^\+\+\+ (\S+)\t(\S+)(.*)$,+++ b/src/\1\t\2,' \
+	| awk '/^Index:.*\.(class|texi)/ {skip=1; next} /^Index:/ { skip=0 } skip==0'
+
+Index: libstdc++-v3/include/std/any
+===================================================================
+--- a/src/libstdc++-v3/include/std/any	(.../tags/gcc_7_3_0_release)
++++ b/src/libstdc++-v3/include/std/any	(.../branches/gcc-7-branch)
+@@ -70,7 +70,7 @@
+ 
+   /**
+    *  @brief A type-safe container of any type.
+-   * 
++   *
+    *  An @c any object's state is either empty or it stores a contained object
+    *  of CopyConstructible type.
+    */
+@@ -114,8 +114,8 @@
+       void __do_emplace(_Args&&... __args)
+       {
+ 	reset();
++        _Mgr::_S_create(_M_storage, std::forward<_Args>(__args)...);
+ 	_M_manager = &_Mgr::_S_manage;
+-        _Mgr::_S_create(_M_storage, std::forward<_Args>(__args)...);
+       }
+ 
+     /// Emplace with an object created from @p __il and @p __args as
+@@ -125,8 +125,8 @@
+       void __do_emplace(initializer_list<_Up> __il, _Args&&... __args)
+       {
+ 	reset();
++        _Mgr::_S_create(_M_storage, __il, std::forward<_Args>(__args)...);
+ 	_M_manager = &_Mgr::_S_manage;
+-        _Mgr::_S_create(_M_storage, __il, std::forward<_Args>(__args)...);
+       }
+ 
+   public:
+@@ -272,8 +272,7 @@
+ 				   _Decay<_ValueType>, _Args&&...>::type
+       emplace(_Args&&... __args)
+       {
+-	__do_emplace<_Decay<_ValueType>>
+-	  (std::forward<_Args>(__args)...);
++	__do_emplace<_Decay<_ValueType>>(std::forward<_Args>(__args)...);
+ 	any::_Arg __arg;
+ 	this->_M_manager(any::_Op_access, this, &__arg);
+ 	return *static_cast<_Decay<_ValueType>*>(__arg._M_obj);
+@@ -288,8 +287,8 @@
+ 				   _Args&&...>::type
+       emplace(initializer_list<_Up> __il, _Args&&... __args)
+       {
+-	__do_emplace<_Decay<_ValueType>, _Up>
+-	  (__il, std::forward<_Args>(__args)...);
++	__do_emplace<_Decay<_ValueType>, _Up>(__il,
++					      std::forward<_Args>(__args)...);
+ 	any::_Arg __arg;
+ 	this->_M_manager(any::_Op_access, this, &__arg);
+ 	return *static_cast<_Decay<_ValueType>*>(__arg._M_obj);
+@@ -624,7 +623,7 @@
+     }
+ 
+   /// @}
+-  
++
+ _GLIBCXX_END_NAMESPACE_VERSION
+ } // namespace std
+ 
+Index: libstdc++-v3/include/std/type_traits
+===================================================================
+--- a/src/libstdc++-v3/include/std/type_traits	(.../tags/gcc_7_3_0_release)
++++ b/src/libstdc++-v3/include/std/type_traits	(.../branches/gcc-7-branch)
+@@ -3069,6 +3069,10 @@
+       remove_cv_t<remove_all_extents_t<_Tp>>
+       )>
+     { };
++
++  template<typename _Tp>
++    inline constexpr bool has_unique_object_representations_v
++      = has_unique_object_representations<_Tp>::value;
+ #endif
+ #undef _GLIBCXX_HAVE_BUILTIN_HAS_UNIQ_OBJ_REP
+ 
+Index: libstdc++-v3/include/bits/random.h
+===================================================================
+--- a/src/libstdc++-v3/include/bits/random.h	(.../tags/gcc_7_3_0_release)
++++ b/src/libstdc++-v3/include/bits/random.h	(.../branches/gcc-7-branch)
+@@ -2643,7 +2643,12 @@
+        */
+       void
+       param(const param_type& __param)
+-      { _M_param = __param; }
++      {
++	_M_param = __param;
++	typedef typename std::gamma_distribution<result_type>::param_type
++	  param_type;
++	_M_gd.param(param_type{__param.n() / 2});
++      }
+ 
+       /**
+        * @brief Returns the greatest lower bound value of the distribution.
+Index: libstdc++-v3/include/c_global/cstddef
+===================================================================
+--- a/src/libstdc++-v3/include/c_global/cstddef	(.../tags/gcc_7_3_0_release)
++++ b/src/libstdc++-v3/include/c_global/cstddef	(.../branches/gcc-7-branch)
+@@ -65,7 +65,7 @@
+   /// std::byte
+   enum class byte : unsigned char {};
+ 
+-  template<typename _IntegerType> struct __byte_operand;
++  template<typename _IntegerType> struct __byte_operand { };
+   template<> struct __byte_operand<bool> { using __type = byte; };
+   template<> struct __byte_operand<char> { using __type = byte; };
+   template<> struct __byte_operand<signed char> { using __type = byte; };
+Index: libstdc++-v3/ChangeLog
+===================================================================
+--- a/src/libstdc++-v3/ChangeLog	(.../tags/gcc_7_3_0_release)
++++ b/src/libstdc++-v3/ChangeLog	(.../branches/gcc-7-branch)
+@@ -1,3 +1,39 @@
++2018-01-29  Jonathan Wakely  <jwakely@redhat.com>
++
++	PR libstdc++/83833
++	* testsuite/26_numerics/random/chi_squared_distribution/83833.cc:
++	Add -ffloat-store to options for m68k and ia32.
++
++	PR libstdc++/83658
++	* include/std/any (any::__do_emplace): Only set _M_manager after
++	constructing the contained object.
++	* testsuite/20_util/any/misc/any_cast_neg.cc: Adjust dg-error line.
++	* testsuite/20_util/any/modifiers/83658.cc: New test.
++
++	Backport from mainline
++	2018-01-15  Jonathan Wakely  <jwakely@redhat.com>
++
++	PR libstdc++/83833
++	* include/bits/random.h (chi_squared_distribution::param): Update
++	gamma distribution parameter.
++	* testsuite/26_numerics/random/chi_squared_distribution/83833.cc: New
++	test.
++
++2018-01-25  Jonathan Wakely  <jwakely@redhat.com>
++
++	PR libstdc++/81076
++	* include/c_global/cstddef (__byte_operand): Define primary template.
++	* testsuite/18_support/byte/81076.cc: New test.
++
++	Backport from mainline
++	2018-01-15  Jonathan Wakely  <jwakely@redhat.com>
++
++	PR libstdc++/83830
++	* include/std/type_traits (has_unique_object_representations_v): Add
++	variable template.
++	* testsuite/20_util/has_unique_object_representations/value.cc: Check
++	variable template.
++
+ 2018-01-25  Release Manager
+ 
+ 	* GCC 7.3.0 released.
+Index: libstdc++-v3/testsuite/18_support/byte/81076.cc
+===================================================================
+--- a/src/libstdc++-v3/testsuite/18_support/byte/81076.cc	(.../tags/gcc_7_3_0_release)
++++ b/src/libstdc++-v3/testsuite/18_support/byte/81076.cc	(.../branches/gcc-7-branch)
+@@ -0,0 +1,26 @@
++// Copyright (C) 2018 Free Software Foundation, Inc.
++//
++// This file is part of the GNU ISO C++ Library.  This library is free
++// software; you can redistribute it and/or modify it under the
++// terms of the GNU General Public License as published by the
++// Free Software Foundation; either version 3, or (at your option)
++// any later version.
++
++// This library is distributed in the hope that it will be useful,
++// but WITHOUT ANY WARRANTY; without even the implied warranty of
++// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++// GNU General Public License for more details.
++
++// You should have received a copy of the GNU General Public License along
++// with this library; see the file COPYING3.  If not see
++// <http://www.gnu.org/licenses/>.
++
++// { dg-options "-std=gnu++17" }
++// { dg-do compile { target c++1z } }
++
++#include <cstddef>
++
++template<class> void to_integer(...);
++
++using T = decltype(to_integer<void* const>(std::byte{}));
++using T = void;
+Index: libstdc++-v3/testsuite/26_numerics/random/chi_squared_distribution/83833.cc
+===================================================================
+--- a/src/libstdc++-v3/testsuite/26_numerics/random/chi_squared_distribution/83833.cc	(.../tags/gcc_7_3_0_release)
++++ b/src/libstdc++-v3/testsuite/26_numerics/random/chi_squared_distribution/83833.cc	(.../branches/gcc-7-branch)
+@@ -0,0 +1,40 @@
++// Copyright (C) 2018 Free Software Foundation, Inc.
++//
++// This file is part of the GNU ISO C++ Library.  This library is free
++// software; you can redistribute it and/or modify it under the
++// terms of the GNU General Public License as published by the
++// Free Software Foundation; either version 3, or (at your option)
++// any later version.
++
++// This library is distributed in the hope that it will be useful,
++// but WITHOUT ANY WARRANTY; without even the implied warranty of
++// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++// GNU General Public License for more details.
++
++// You should have received a copy of the GNU General Public License along
++// with this library; see the file COPYING3.  If not see
++// <http://www.gnu.org/licenses/>.
++
++// { dg-do run { target c++11 } }
++// { dg-additional-options "-ffloat-store" { target { m68*-*-* || ia32 } } }
++
++#include <random>
++#include <testsuite_hooks.h>
++
++void
++test01()
++{
++  std::default_random_engine r1, r2;
++  using chi = std::chi_squared_distribution<double>;
++  chi::param_type p(5);
++  chi d1(p);
++  chi d2;
++  d2.param(p);
++  VERIFY( d1(r1) == d2(r2) ); // PR libstdc++/83833
++}
++
++int
++main()
++{
++  test01();
++}
+Index: libstdc++-v3/testsuite/20_util/any/modifiers/83658.cc
+===================================================================
+--- a/src/libstdc++-v3/testsuite/20_util/any/modifiers/83658.cc	(.../tags/gcc_7_3_0_release)
++++ b/src/libstdc++-v3/testsuite/20_util/any/modifiers/83658.cc	(.../branches/gcc-7-branch)
+@@ -0,0 +1,74 @@
++// Copyright (C) 2018 Free Software Foundation, Inc.
++//
++// This file is part of the GNU ISO C++ Library.  This library is free
++// software; you can redistribute it and/or modify it under the
++// terms of the GNU General Public License as published by the
++// Free Software Foundation; either version 3, or (at your option)
++// any later version.
++
++// This library is distributed in the hope that it will be useful,
++// but WITHOUT ANY WARRANTY; without even the implied warranty of
++// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++// GNU General Public License for more details.
++
++// You should have received a copy of the GNU General Public License along
++// with this library; see the file COPYING3.  If not see
++// <http://www.gnu.org/licenses/>.
++
++// { dg-options "-std=gnu++17" }
++// { dg-do run { target c++1z } }
++
++#include <any>
++#include <new>
++#include <testsuite_hooks.h>
++
++struct E : std::bad_alloc { };
++
++struct X
++{
++    X() = default;
++    X(std::initializer_list<int>) { }
++
++    // Prevents small-object optimization:
++    X(const X&) noexcept(false) { }
++
++    static void* operator new(std::size_t) { throw E{}; }
++    static void operator delete(void*, std::size_t) noexcept { }
++};
++
++void
++test01()
++{
++  std::any a;
++  try
++  {
++    a.emplace<X>();
++    VERIFY(false);
++  }
++  catch (const E&)
++  {
++    VERIFY( !a.has_value() );
++  }
++}
++
++void
++test02()
++{
++  std::any a;
++  try
++  {
++    a.emplace<X>(std::initializer_list<int>{});
++    VERIFY(false);
++  }
++  catch (const E&)
++  {
++    VERIFY( !a.has_value() );
++  }
++}
++
++int
++main()
++{
++  test01();
++  test02();
++}
+Index: libstdc++-v3/testsuite/20_util/any/misc/any_cast_neg.cc
+===================================================================
+--- a/src/libstdc++-v3/testsuite/20_util/any/misc/any_cast_neg.cc	(.../tags/gcc_7_3_0_release)
++++ b/src/libstdc++-v3/testsuite/20_util/any/misc/any_cast_neg.cc	(.../branches/gcc-7-branch)
+@@ -26,5 +26,5 @@
+   using std::any_cast;
+ 
+   const any y(1);
+-  any_cast<int&>(y); // { dg-error "invalid static_cast" "" { target { *-*-* } } 461 }
++  any_cast<int&>(y); // { dg-error "invalid static_cast" "" { target { *-*-* } } 460 }
+ }
+Index: libstdc++-v3/testsuite/20_util/has_unique_object_representations/value.cc
+===================================================================
+--- a/src/libstdc++-v3/testsuite/20_util/has_unique_object_representations/value.cc	(.../tags/gcc_7_3_0_release)
++++ b/src/libstdc++-v3/testsuite/20_util/has_unique_object_representations/value.cc	(.../branches/gcc-7-branch)
+@@ -108,3 +108,17 @@
+   static_assert(test_category<has_unique_object_representations,
+ 		Aligned[][1]>(false), "");
+ }
++
++void
++test02()
++{
++  using std::has_unique_object_representations;
++  using std::has_unique_object_representations_v;
++
++  static_assert(has_unique_object_representations_v<int>
++		== has_unique_object_representations<int>::value);
++  static_assert(has_unique_object_representations_v<void>
++		== has_unique_object_representations<void>::value);
++  static_assert(has_unique_object_representations_v<float>
++		== has_unique_object_representations<float>::value);
++}
+Index: gcc/DATESTAMP
+===================================================================
+--- a/src/gcc/DATESTAMP	(.../tags/gcc_7_3_0_release)
++++ b/src/gcc/DATESTAMP	(.../branches/gcc-7-branch)
+@@ -1 +1 @@
+-20180125
++20180208
+Index: gcc/configure
+===================================================================
+--- a/src/gcc/configure	(.../tags/gcc_7_3_0_release)
++++ b/src/gcc/configure	(.../branches/gcc-7-branch)
+@@ -23571,6 +23571,14 @@
+ 
+ 
+ fi
++case "$target" in
++  i?86-*-solaris2.10* | x86_64-*-solaris2.10*)
++    # SHF_MERGE support in Solaris 10/x86 ld is broken.
++    if test x"$gnu_ld" = xno; then
++      gcc_cv_as_shf_merge=no
++    fi
++    ;;
++esac
+ 
+ cat >>confdefs.h <<_ACEOF
+ #define HAVE_GAS_SHF_MERGE `if test $gcc_cv_as_shf_merge = yes; then echo 1; else echo 0; fi`
+Index: gcc/ChangeLog
+===================================================================
+--- a/src/gcc/ChangeLog	(.../tags/gcc_7_3_0_release)
++++ b/src/gcc/ChangeLog	(.../branches/gcc-7-branch)
+@@ -1,3 +1,217 @@
++2018-02-07  Bill Schmidt  <wschmidt@linux.vnet.ibm.com>
++
++	Backport from mainline
++	2018-02-06  Bill Schmidt  <wschmidt@linux.vnet.ibm.com>
++
++	* config/rs6000/rs6000.c (rs6000_option_override_internal):
++	Display warning message for -mno-speculate-indirect-jumps.
++
++2018-02-05  Rainer Orth  <ro@CeBiTec.Uni-Bielefeld.DE>
++
++	Backport from mainline
++	2018-01-30  Rainer Orth  <ro@CeBiTec.Uni-Bielefeld.DE>
++
++	PR bootstrap/84017
++	* configure.ac (gcc_cv_as_shf_merge): Disable on Solaris 10/x86.
++	* configure: Regenerate.
++
++2018-02-05  Peter Bergner  <bergner@vnet.ibm.com>
++
++	Back port from mainline
++	2018-02-01  Peter Bergner  <bergner@vnet.ibm.com>
++
++	PR target/56010
++	PR target/83743
++	* config/rs6000/driver-rs6000.c: #include "diagnostic.h".
++	#include "opts.h".
++	(rs6000_supported_cpu_names): New static variable.
++	(linux_cpu_translation_table): Likewise.
++	(elf_platform) <cpu>: Define new static variable and use it.
++	Translate kernel AT_PLATFORM name to canonical name if needed.
++	Error if platform name is unknown.
++
++2018-02-02  H.J. Lu  <hongjiu.lu@intel.com>
++
++	Backport from mainline
++	2018-02-02  H.J. Lu  <hongjiu.lu@intel.com>
++
++	* config/i386/i386.c (ix86_output_function_return): Pass
++	INVALID_REGNUM, instead of -1, as invalid register number to
++	indirect_thunk_name and output_indirect_thunk.
++
++2018-02-01  Uros Bizjak  <ubizjak@gmail.com>
++
++	Backport from mainline
++	2018-01-31  Uros Bizjak  <ubizjak@gmail.com>
++
++	PR rtl-optimization/84123
++	* combine.c (change_zero_ext): Check if hard register satisfies
++	can_change_dest_mode before calling gen_lowpart_SUBREG.
++
++2018-02-01  Renlin Li  <renlin.li@arm.com>
++
++	Backport from mainline
++	2018-02-01  Renlin Li  <renlin.li@arm.com>
++
++	PR target/83370
++	* config/aarch64/aarch64.c (aarch64_class_max_nregs): Handle
++	TAILCALL_ADDR_REGS.
++	(aarch64_register_move_cost): Likewise.
++	* config/aarch64/aarch64.h (reg_class): Rename CALLER_SAVE_REGS to
++	TAILCALL_ADDR_REGS.
++	(REG_CLASS_NAMES): Likewise.
++	(REG_CLASS_CONTENTS): Rename CALLER_SAVE_REGS to
++	TAILCALL_ADDR_REGS. Remove IP registers.
++	* config/aarch64/aarch64.md (Ucs): Update register constraint.
++
++2018-02-01  Richard Biener  <rguenther@suse.de>
++
++	Backport from mainline
++	2017-11-02  Richard Biener  <rguenther@suse.de>
++
++	PR tree-optimization/82795
++	* tree-if-conv.c (predicate_mem_writes): Remove bogus assert.
++
++2018-01-31  Richard Biener <rguenther@suse.de>
++	    Kelvin Nilsen  <kelvin@gcc.gnu.org>
++
++	Backport from mainline
++	2018-01-29  Richard Biener <rguenther@suse.de>
++		    Kelvin Nilsen  <kelvin@gcc.gnu.org>
++
++	PR bootstrap/80867
++	* tree-vect-stmts.c (vectorizable_call): Don't call
++	targetm.vectorize_builtin_md_vectorized_function if callee is
++	NULL.
++
++2018-01-31  Eric Botcazou  <ebotcazou@adacore.com>
++
++	PR rtl-optimization/84071
++	* doc/tm.texi.in (WORD_REGISTER_OPERATIONS): Add explicit case.
++	* doc/tm.texi: Regenerate.
++
++2018-01-31  Eric Botcazou  <ebotcazou@adacore.com>
++
++	PR rtl-optimization/84071
++	* combine.c (record_dead_and_set_regs_1): Record the source unmodified
++	for a paradoxical SUBREG on a WORD_REGISTER_OPERATIONS target.
++
++2018-01-29  Joseph Myers  <joseph@codesourcery.com>
++
++	Backport from mainline
++	2018-01-24  Joseph Myers  <joseph@codesourcery.com>
++
++	PR target/68467
++	* config/m68k/m68k.c (m68k_promote_function_mode): New function.
++	(TARGET_PROMOTE_FUNCTION_MODE): New macro.
++
++2018-01-29  Uros Bizjak  <ubizjak@gmail.com>
++
++	Backport from mainline
++	2018-01-26  Uros Bizjak  <ubizjak@gmail.com>
++
++	PR target/81763
++	* config/i386/i386.md (*andndi3_doubleword): Add earlyclobber
++	to (=&r,r,rm) alternative. Add (=r,0,rm) and (=r,r,0) alternatives.
++
++2018-01-29  Alan Modra  <amodra@gmail.com>
++
++	Backport from mainline
++	2018-01-26  Alan Modra  <amodra@gmail.com>
++	PR target/84033
++	* config/rs6000/rs6000.c (rtx_is_swappable_p): Exclude
++	UNSPEC_VBPERMQ.
++
++2018-01-27  H.J. Lu  <hongjiu.lu@intel.com>
++
++	Backport from mainline
++	2018-01-27  H.J. Lu  <hongjiu.lu@intel.com>
++
++	* doc/invoke.texi: Replace -mfunction-return==@var{choice} with
++	-mfunction-return=@var{choice}.
++
++2018-01-27  H.J. Lu  <hongjiu.lu@intel.com>
++
++	Backport from mainline
++	2018-01-23  H.J. Lu  <hongjiu.lu@intel.com>
++
++	PR target/83905
++	* config/i386/i386.c (ix86_expand_prologue): Use cost reference
++	of struct ix86_frame.
++	(ix86_expand_epilogue): Likewise.  Add a local variable for
++	the reg_save_offset field in struct ix86_frame.
++
++2018-01-26  Jakub Jelinek  <jakub@redhat.com>
++
++	PR rtl-optimization/83985
++	* dce.c (deletable_insn_p): Return false for separate shrink wrapping
++	REG_CFA_RESTORE insns.
++	(delete_unmarked_insns): Don't ignore separate shrink wrapping
++	REG_CFA_RESTORE insns here.
++
++2018-01-25  Uros Bizjak  <ubizjak@gmail.com>
++
++	Backport from mainline
++	2018-01-17  Uros Bizjak  <ubizjak@gmail.com>
++
++	* config/i386/i386.c (indirect_thunk_name): Declare regno
++	as unsigned int.  Compare regno with INVALID_REGNUM.
++	(output_indirect_thunk): Ditto.
++	(output_indirect_thunk_function): Ditto.
++	(ix86_code_end): Declare regno as unsigned int.  Use INVALID_REGNUM
++	in the call to output_indirect_thunk_function.
++
++2018-01-25  Michael Meissner  <meissner@linux.vnet.ibm.com>
++
++	Back port from trunk
++	2018-01-22  Michael Meissner  <meissner@linux.vnet.ibm.com>
++
++	PR target/83862
++	* config/rs6000/rs6000-protos.h (rs6000_split_signbit): Delete,
++	no longer used.
++	* config/rs6000/rs6000.c (rs6000_split_signbit): Likewise.
++	* config/rs6000/rs6000.md (signbit<mode>2): Change code for IEEE
++	128-bit to produce an UNSPEC move to get the double word with the
++	signbit and then a shift directly to do signbit.
++	(signbit<mode>2_dm): Replace old IEEE 128-bit signbit
++	implementation with a new version that just does either a direct
++	move or a regular move.  Move memory interface to separate insns.
++	Move insns so they are next to the expander.
++	(signbit<mode>2_dm_mem_be): New combiner insns to combine load
++	with signbit move.  Split big and little endian case.
++	(signbit<mode>2_dm_mem_le): Likewise.
++	(signbit<mode>2_dm_<su>ext): Delete, no longer used.
++	(signbit<mode>2_dm2): Likewise.
++
++2018-01-25  Peter Bergner  <bergner@vnet.ibm.com>
++
++	Back port from mainline
++	2018-01-10  Peter Bergner  <bergner@vnet.ibm.com>
++
++	PR target/83399
++	* config/rs6000/rs6000.c (print_operand) <'y'>: Use
++	VECTOR_MEM_ALTIVEC_OR_VSX_P.
++	* config/rs6000/vsx.md (*vsx_le_perm_load_<mode> for VSX_D): Use
++	indexed_or_indirect_operand predicate.
++	(*vsx_le_perm_load_<mode> for VSX_W): Likewise.
++	(*vsx_le_perm_load_v8hi): Likewise.
++	(*vsx_le_perm_load_v16qi): Likewise.
++	(*vsx_le_perm_store_<mode> for VSX_D): Likewise.
++	(*vsx_le_perm_store_<mode> for VSX_W): Likewise.
++	(*vsx_le_perm_store_v8hi): Likewise.
++	(*vsx_le_perm_store_v16qi): Likewise.
++	(eight unnamed splitters): Likewise.
++
++2018-01-25  Bill Schmidt  <wschmidt@linux.vnet.ibm.com>
++
++	Backport from mainline
++	2018-01-02  Bill Schmidt  <wschmidt@linux.vnet.ibm.com>
++
++	* config/rs6000/rs6000-p8swap.c (swap_feeds_both_load_and_store):
++	New function.
++	(rs6000_analyze_swaps): Mark a web unoptimizable if it contains a
++	swap associated with both a load and a store.
++
+ 2018-01-25  Release Manager
+ 
+ 	* GCC 7.3.0 released.
+Index: gcc/testsuite/gcc.target/powerpc/safe-indirect-jump-8.c
+===================================================================
+--- a/src/gcc/testsuite/gcc.target/powerpc/safe-indirect-jump-8.c	(.../tags/gcc_7_3_0_release)
++++ b/src/gcc/testsuite/gcc.target/powerpc/safe-indirect-jump-8.c	(.../branches/gcc-7-branch)
+@@ -1,15 +0,0 @@
+-/* { dg-do compile { target { ilp32 } } } */
+-/* { dg-additional-options "-O2 -mno-speculate-indirect-jumps" } */
+-
+-/* Test for deliberate misprediction of -m32 sibcalls.  */
+-
+-extern int (*f)();
+-
+-int bar ()
+-{
+-  return (*f) ();
+-}
+-
+-/* { dg-final { scan-assembler "crset 2" } } */
+-/* { dg-final { scan-assembler "beqctr-" } } */
+-/* { dg-final { scan-assembler {b \$} } } */
+Index: gcc/testsuite/gcc.target/powerpc/safe-indirect-jump-2.c
+===================================================================
+--- a/src/gcc/testsuite/gcc.target/powerpc/safe-indirect-jump-2.c	(.../tags/gcc_7_3_0_release)
++++ b/src/gcc/testsuite/gcc.target/powerpc/safe-indirect-jump-2.c	(.../branches/gcc-7-branch)
+@@ -1,5 +1,6 @@
+ /* { dg-do compile } */
+ /* { dg-options "-mno-speculate-indirect-jumps" } */
++/* { dg-warning "'-mno-speculate-indirect-jumps' is deprecated" "" { target *-*-* } 0 } */
+ 
+ /* Test for deliberate misprediction of computed goto.  */
+ 
+Index: gcc/testsuite/gcc.target/powerpc/safe-indirect-jump-3.c
+===================================================================
+--- a/src/gcc/testsuite/gcc.target/powerpc/safe-indirect-jump-3.c	(.../tags/gcc_7_3_0_release)
++++ b/src/gcc/testsuite/gcc.target/powerpc/safe-indirect-jump-3.c	(.../branches/gcc-7-branch)
+@@ -1,5 +1,6 @@
+ /* { dg-do compile } */
+ /* { dg-options "-mno-speculate-indirect-jumps" } */
++/* { dg-warning "'-mno-speculate-indirect-jumps' is deprecated" "" { target *-*-* } 0 } */
+ 
+ /* Test for deliberate misprediction of jump tables.  */
+ 
+Index: gcc/testsuite/gcc.target/powerpc/safe-indirect-jump-4.c
+===================================================================
+--- a/src/gcc/testsuite/gcc.target/powerpc/safe-indirect-jump-4.c	(.../tags/gcc_7_3_0_release)
++++ b/src/gcc/testsuite/gcc.target/powerpc/safe-indirect-jump-4.c	(.../branches/gcc-7-branch)
+@@ -1,5 +1,6 @@
+ /* { dg-do run } */
+ /* { dg-additional-options "-mno-speculate-indirect-jumps" } */
++/* { dg-warning "'-mno-speculate-indirect-jumps' is deprecated" "" { target *-*-* } 0 } */
+ 
+ /* Test for deliberate misprediction of indirect calls for ELFv2.  */
+ 
+Index: gcc/testsuite/gcc.target/powerpc/safe-indirect-jump-5.c
+===================================================================
+--- a/src/gcc/testsuite/gcc.target/powerpc/safe-indirect-jump-5.c	(.../tags/gcc_7_3_0_release)
++++ b/src/gcc/testsuite/gcc.target/powerpc/safe-indirect-jump-5.c	(.../branches/gcc-7-branch)
+@@ -1,5 +1,6 @@
+ /* { dg-do run } */
+ /* { dg-additional-options "-mno-speculate-indirect-jumps -Wno-pedantic" } */
++/* { dg-warning "'-mno-speculate-indirect-jumps' is deprecated" "" { target *-*-* } 0 } */
+ 
+ /* Test for deliberate misprediction of computed goto.  */
+ 
+Index: gcc/testsuite/gcc.target/powerpc/safe-indirect-jump-6.c
+===================================================================
+--- a/src/gcc/testsuite/gcc.target/powerpc/safe-indirect-jump-6.c	(.../tags/gcc_7_3_0_release)
++++ b/src/gcc/testsuite/gcc.target/powerpc/safe-indirect-jump-6.c	(.../branches/gcc-7-branch)
+@@ -1,5 +1,6 @@
+ /* { dg-do run } */
+ /* { dg-additional-options "-mno-speculate-indirect-jumps" } */
++/* { dg-warning "'-mno-speculate-indirect-jumps' is deprecated" "" { target *-*-* } 0 } */
+ 
+ /* Test for deliberate misprediction of jump tables.  */
+ 
+Index: gcc/testsuite/gcc.target/powerpc/safe-indirect-jump-7.c
+===================================================================
+--- a/src/gcc/testsuite/gcc.target/powerpc/safe-indirect-jump-7.c	(.../tags/gcc_7_3_0_release)
++++ b/src/gcc/testsuite/gcc.target/powerpc/safe-indirect-jump-7.c	(.../branches/gcc-7-branch)
+@@ -1,5 +1,6 @@
+ /* { dg-do compile } */
+ /* { dg-additional-options "-mno-speculate-indirect-jumps" } */
++/* { dg-warning "'-mno-speculate-indirect-jumps' is deprecated" "" { target *-*-* } 0 } */
+ 
+ /* Test for deliberate misprediction of indirect calls.  */
+ 
+Index: gcc/testsuite/gcc.target/powerpc/swaps-p8-46.c
+===================================================================
+--- a/src/gcc/testsuite/gcc.target/powerpc/swaps-p8-46.c	(.../tags/gcc_7_3_0_release)
++++ b/src/gcc/testsuite/gcc.target/powerpc/swaps-p8-46.c	(.../branches/gcc-7-branch)
+@@ -0,0 +1,34 @@
++/* { dg-do run { target { powerpc64le-*-* } } } */
++/* { dg-require-effective-target powerpc_p8vector_ok } */
++/* { dg-skip-if "do not override -mcpu" { powerpc*-*-* } { "-mcpu=*" } { "-mcpu=power8" } } */
++/* { dg-options "-mcpu=power8 -O2 " } */
++
++typedef __attribute__ ((__aligned__ (8))) unsigned long long __m64;
++typedef float __m128 __attribute__ ((__vector_size__ (16), __may_alias__));
++
++/* PR84033.  Extracted from xmmintrin.h but with a pointer param to
++   allow swaps to happen when not inline.  */
++int __attribute__ ((__noinline__))
++_mm_movemask_ps (__m128 *__A)
++{
++  __vector __m64 result;
++  static const __vector unsigned int perm_mask =
++    {
++      0x00204060, 0x80808080, 0x80808080, 0x80808080
++    };
++
++  result = (__vector __m64)
++    __builtin_vec_vbpermq ((__vector unsigned char) (*__A),
++			   (__vector unsigned char) perm_mask);
++  return result[1];
++}
++
++int
++main (void)
++{
++  union { unsigned int i[4]; __m128 m; } x
++    = { 0x80000000, 0x80000000, 0x7fffffff, 0x7fffffff };
++  if (_mm_movemask_ps (&x.m) != 3)
++    __builtin_abort ();
++  return 0;
++}
+Index: gcc/testsuite/gcc.target/powerpc/pr83862.c
+===================================================================
+--- a/src/gcc/testsuite/gcc.target/powerpc/pr83862.c	(.../tags/gcc_7_3_0_release)
++++ b/src/gcc/testsuite/gcc.target/powerpc/pr83862.c	(.../branches/gcc-7-branch)
+@@ -0,0 +1,34 @@
++/* PR target/83862.c */
++/* { dg-do compile { target { powerpc*-*-* && lp64 } } } */
++/* { dg-require-effective-target ppc_float128_sw } */
++/* { dg-require-effective-target powerpc_p9vector_ok } */
++/* { dg-options "-mpower9-vector -O2 -mfloat128" } */
++
++/* On little endian systems, optimizing signbit of IEEE 128-bit values from
++   memory could abort if the memory address was indexed (reg+reg).  The
++   optimization is only on 64-bit machines with direct move.
++
++   Compile with -g -O2 -mabi=ieeelongdouble -Wno-psabi.  */
++
++#ifndef TYPE
++#define TYPE __float128
++#endif
++
++int sbr (TYPE a) { return __builtin_signbit (a); }
++int sbm (TYPE *a) { return __builtin_signbit (*a); }
++int sbo (TYPE *a) { return __builtin_signbit (a[4]); }
++int sbi (TYPE *a, unsigned long n) { return __builtin_signbit (a[n]); }
++void sbs (int *p, TYPE a) { *p = __builtin_signbit (a); }
++
++/* On big endian systems, this will generate 2 LDs and 1 LDX, while on
++   little endian systems, this will generate 3 LDs and an ADD.  */
++
++/* { dg-final { scan-assembler-times {\mldx?\M}    3 } } */
++/* { dg-final { scan-assembler-times {\mmfvsrd\M}  2 } } */
++/* { dg-final { scan-assembler-times {\msrdi\M}    5 } } */
++/* { dg-final { scan-assembler-not   {\mmfvsrld\M}   } } */
++/* { dg-final { scan-assembler-not   {\mstxvx?\M}    } } */
++/* { dg-final { scan-assembler-not   {\mstxvw4x\M}   } } */
++/* { dg-final { scan-assembler-not   {\mstxvd2x\M}   } } */
++/* { dg-final { scan-assembler-not   {\mstvx\M}      } } */
++
+Index: gcc/testsuite/gcc.target/powerpc/pr83399.c
+===================================================================
+--- a/src/gcc/testsuite/gcc.target/powerpc/pr83399.c	(.../tags/gcc_7_3_0_release)
++++ b/src/gcc/testsuite/gcc.target/powerpc/pr83399.c	(.../branches/gcc-7-branch)
+@@ -0,0 +1,15 @@
++/* PR target/83399 */
++/* { dg-do compile } */
++/* { dg-require-effective-target powerpc_vsx_ok } */
++/* { dg-options "-O1 -mabi=elfv2 -mlittle -mvsx" } */
++
++typedef __attribute__((altivec(vector__))) int v4si_t;
++int
++foo (void)
++{
++  v4si_t a, u, v, y;
++  u = __builtin_altivec_lvx (32, ((void *) &a) - 32);
++  v = __builtin_altivec_lvx (64, ((void *) &a) - 32);
++  y = u + v;
++  return y[0];
++}
+Index: gcc/testsuite/gcc.target/powerpc/safe-indirect-jump-1.c
+===================================================================
+--- a/src/gcc/testsuite/gcc.target/powerpc/safe-indirect-jump-1.c	(.../tags/gcc_7_3_0_release)
++++ b/src/gcc/testsuite/gcc.target/powerpc/safe-indirect-jump-1.c	(.../branches/gcc-7-branch)
+@@ -1,5 +1,6 @@
+-/* { dg-do compile { target { lp64 } } } */
++/* { dg-do compile } */
+ /* { dg-additional-options "-mno-speculate-indirect-jumps" } */
++/* { dg-warning "'-mno-speculate-indirect-jumps' is deprecated" "" { target *-*-* } 0 } */
+ 
+ /* Test for deliberate misprediction of indirect calls.  */
+ 
+@@ -11,4 +12,10 @@
+ }
+ 
+ /* { dg-final { scan-assembler "crset 2" } } */
+-/* { dg-final { scan-assembler "beqctrl-" } } */
++
++/* The AIX and ELFv2 ABIs don't allow a sibcall here.  */
++/* { dg-final { scan-assembler "beqctrl-" { target { lp64 || { powerpc*-*-aix* } } } } } */
++
++/* The other ABIs do allow a sibcall.  */
++/* { dg-final { scan-assembler "beqctr-" { target { ilp32 && !powerpc*-*-aix* } } } } */
++/* { dg-final { scan-assembler {b \$} { target { ilp32 && !powerpc*-*-aix* } } } } */
+Index: gcc/testsuite/gcc.target/aarch64/pr83370.c
+===================================================================
+--- a/src/gcc/testsuite/gcc.target/aarch64/pr83370.c	(.../tags/gcc_7_3_0_release)
++++ b/src/gcc/testsuite/gcc.target/aarch64/pr83370.c	(.../branches/gcc-7-branch)
+@@ -0,0 +1,22 @@
++/* { dg-do run } */
++/* { dg-options "-O2" } */
++
++typedef void (*fun) (void);
++
++void
++f (fun x1)
++{
++  register fun x2 asm ("x16");
++  int arr[5000];
++  int *volatile ptr = arr;
++  asm ("mov %0, %1" : "=r" (x2) : "r" (x1));
++  x2 ();
++}
++
++void g (void) {}
++
++int
++main (void)
++{
++  f (g);
++}
+Index: gcc/testsuite/gcc.target/i386/pr82795.c
+===================================================================
+--- a/src/gcc/testsuite/gcc.target/i386/pr82795.c	(.../tags/gcc_7_3_0_release)
++++ b/src/gcc/testsuite/gcc.target/i386/pr82795.c	(.../branches/gcc-7-branch)
+@@ -0,0 +1,23 @@
++/* { dg-do compile } */
++/* { dg-options "-O3 -mavx2" } */
++
++void
++sj (int qh, int rn, int *by)
++{
++  for (;;)
++    if (qh != 0)
++      {
++	int dc;
++
++	for (dc = 0; dc < 17; ++dc)
++	  {
++	    int nn;
++
++	    nn = (rn != 0) ? qh : dc;
++	    if (nn != 0)
++	      qh = nn;
++	    else
++	      qh = (qh != 0) ? *by : dc;
++	  }
++      }
++}
+Index: gcc/testsuite/gcc.target/i386/i386.exp
+===================================================================
+--- a/src/gcc/testsuite/gcc.target/i386/i386.exp	(.../tags/gcc_7_3_0_release)
++++ b/src/gcc/testsuite/gcc.target/i386/i386.exp	(.../branches/gcc-7-branch)
+@@ -241,18 +241,6 @@
+     } "-mrtm" ]
+ }
+ 
+-# Return 1 if avx512f instructions can be compiled.
+-proc check_effective_target_avx512f { } {
+-    return [check_no_compiler_messages avx512f object {
+-	typedef long long __v8di __attribute__ ((__vector_size__ (64)));
+-	__v8di
+-	mm512_and_epi64  (__v8di __X, __v8di __Y)
+-	{
+-            return __builtin_ia32_pandq512_mask (__X, __Y, __X, -1);
+-	}
+-    } "-mavx512f" ]
+-}
+-
+ # Return 1 if avx512vl instructions can be compiled.
+ proc check_effective_target_avx512vl { } {
+     return [check_no_compiler_messages avx512vl object {
+Index: gcc/testsuite/lib/target-supports.exp
+===================================================================
+--- a/src/gcc/testsuite/lib/target-supports.exp	(.../tags/gcc_7_3_0_release)
++++ b/src/gcc/testsuite/lib/target-supports.exp	(.../branches/gcc-7-branch)
+@@ -7348,11 +7348,22 @@
+ proc check_effective_target_avx512f { } {
+     return [check_no_compiler_messages avx512f object {
+ 	typedef double __m512d __attribute__ ((__vector_size__ (64)));
++	typedef double __m128d __attribute__ ((__vector_size__ (16)));
+ 
+ 	__m512d _mm512_add (__m512d a)
+ 	{
+ 	  return __builtin_ia32_addpd512_mask (a, a, a, 1, 4);
+ 	}
++
++	__m128d _mm128_add (__m128d a)
++	{
++	  return __builtin_ia32_addsd_round (a, a, 8);
++	}
++
++	__m128d _mm128_getmant (__m128d a)
++	{
++	  return __builtin_ia32_getmantsd_round (a, a, 0, 8);
++	}
+     } "-O2 -mavx512f" ]
+ }
+ 
+Index: gcc/testsuite/gfortran.dg/deallocate_error_4.f90
+===================================================================
+--- a/src/gcc/testsuite/gfortran.dg/deallocate_error_4.f90	(.../tags/gcc_7_3_0_release)
++++ b/src/gcc/testsuite/gfortran.dg/deallocate_error_4.f90	(.../branches/gcc-7-branch)
+@@ -0,0 +1,10 @@
++! { dg-do compile }
++! PR fortran/82994
++! Code contributed by Gerhard Steinmetz
++program p
++   type t
++   end type
++   class(t) :: x  ! { dg-error "must be dummy, allocatable or pointer" }
++   allocate (x)   ! { dg-error "neither a data pointer nor an allocatable" }
++   deallocate (x) ! { dg-error "not a nonprocedure pointer nor an allocatable" }
++end
+Index: gcc/testsuite/gfortran.dg/dec_parameter_1.f
+===================================================================
+--- a/src/gcc/testsuite/gfortran.dg/dec_parameter_1.f	(.../tags/gcc_7_3_0_release)
++++ b/src/gcc/testsuite/gfortran.dg/dec_parameter_1.f	(.../branches/gcc-7-branch)
+@@ -22,7 +22,6 @@
+           two = 2.0d0
+           x = two * pi_1 * f_1 * t
+           y = two * pi_2 * f_2 * t
+-          z = two * pi_3 * f_3 * t
+           return
+         end subroutine
+ 
+Index: gcc/testsuite/gfortran.dg/deallocate_error_3.f90
+===================================================================
+--- a/src/gcc/testsuite/gfortran.dg/deallocate_error_3.f90	(.../tags/gcc_7_3_0_release)
++++ b/src/gcc/testsuite/gfortran.dg/deallocate_error_3.f90	(.../branches/gcc-7-branch)
+@@ -0,0 +1,9 @@
++! { dg-do compile }
++! PR fortran/82994
++! Code contributed by Gerhard Steinmetz
++program p
++   type t
++   end type
++   class(t) :: x  ! { dg-error "must be dummy, allocatable or pointer" }
++   deallocate (x) ! { dg-error "not a nonprocedure pointer nor an allocatable" }
++end
+Index: gcc/testsuite/gfortran.dg/dec_parameter_2.f90
+===================================================================
+--- a/src/gcc/testsuite/gfortran.dg/dec_parameter_2.f90	(.../tags/gcc_7_3_0_release)
++++ b/src/gcc/testsuite/gfortran.dg/dec_parameter_2.f90	(.../branches/gcc-7-branch)
+@@ -21,7 +21,6 @@
+   two = 2.0d0
+   x = two * pi_1 * f_1 * t
+   y = two * pi_2 * f_2 * t
+-  z = two * pi_3 * f_3 * t
+   return
+ end subroutine
+ 
+Index: gcc/testsuite/gfortran.dg/assumed_charlen_parameter.f90
+===================================================================
+--- a/src/gcc/testsuite/gfortran.dg/assumed_charlen_parameter.f90	(.../tags/gcc_7_3_0_release)
++++ b/src/gcc/testsuite/gfortran.dg/assumed_charlen_parameter.f90	(.../branches/gcc-7-branch)
+@@ -0,0 +1,9 @@
++! { dg-do compile }
++! PR fortran/82049
++! Original code contributed by John Harper <john dot harper at vuw dot ac dot nz>
++program ice ! f2003
++  implicit none
++  character(*), parameter:: a = 'ice', b = '*'
++  character(*), parameter:: c(2) = [character(len(a)) :: a, b]
++  print "(2A4)",adjustr(c)
++end program ice
+Index: gcc/testsuite/gcc.c-torture/execute/20180131-1.c
+===================================================================
+--- a/src/gcc/testsuite/gcc.c-torture/execute/20180131-1.c	(.../tags/gcc_7_3_0_release)
++++ b/src/gcc/testsuite/gcc.c-torture/execute/20180131-1.c	(.../branches/gcc-7-branch)
+@@ -0,0 +1,28 @@
++/* PR rtl-optimization/84071 */
++/* Reported by Wilco <wilco@gcc.gnu.org> */
++
++extern void abort (void);
++
++typedef union 
++{
++  signed short ss;
++  unsigned short us;
++  int x;
++} U;
++
++int f(int x, int y, int z, int a, U u) __attribute__((noclone, noinline));
++
++int f(int x, int y, int z, int a, U u)
++{
++  return (u.ss <= 0) + u.us;
++}
++
++int main (void)
++{
++  U u = { .ss = -1 };
++
++  if (f (0, 0, 0, 0, u) != (1 << sizeof (short) * 8))
++    abort ();
++
++  return 0;
++}
+Index: gcc/testsuite/gcc.dg/pr83985.c
+===================================================================
+--- a/src/gcc/testsuite/gcc.dg/pr83985.c	(.../tags/gcc_7_3_0_release)
++++ b/src/gcc/testsuite/gcc.dg/pr83985.c	(.../branches/gcc-7-branch)
+@@ -0,0 +1,25 @@
++/* PR rtl-optimization/83985 */
++/* { dg-do compile } */
++/* { dg-options "-O2" } */
++/* { dg-additional-options "-mcpu=e300c3 -mtune=e300c3" { target { powerpc*-*-* && ilp32 } } } */
++
++long long int v;
++
++void
++foo (int x)
++{
++  if (x == 0)
++    return;
++
++  while (v < 2)
++    {
++      signed char *a;
++      v /= x;
++      a = v == 0 ? (signed char *) &x : (signed char *) &v;
++      ++*a;
++      ++v;
++    }
++
++  while (1)
++    ;
++}
+Index: gcc/testsuite/gcc.dg/rtl/x86_64/final.c
+===================================================================
+--- a/src/gcc/testsuite/gcc.dg/rtl/x86_64/final.c	(.../tags/gcc_7_3_0_release)
++++ b/src/gcc/testsuite/gcc.dg/rtl/x86_64/final.c	(.../branches/gcc-7-branch)
+@@ -1,5 +1,5 @@
+ /* { dg-do compile { target { { i?86-*-* x86_64-*-* } && lp64 } } } */
+-/* { dg-options "-fdump-rtl-final" } */
++/* { dg-options "-fdwarf2-cfi-asm -fdump-rtl-final" } */
+ 
+ /* Lightly-modified dump of test.c.304r.dwarf2 for x86_64 target,
+    with various NOTE_INSN_CFI deleted by hand for now.  */
+Index: gcc/testsuite/gcc.dg/debug/dwarf2/prod-options.c
+===================================================================
+--- a/src/gcc/testsuite/gcc.dg/debug/dwarf2/prod-options.c	(.../tags/gcc_7_3_0_release)
++++ b/src/gcc/testsuite/gcc.dg/debug/dwarf2/prod-options.c	(.../branches/gcc-7-branch)
+@@ -3,9 +3,8 @@
+    the build not reproducible.  Other skipped options could be tested here
+    as well.  */
+ /* { dg-do compile } */
+-/* { dg-options "-O2 -gdwarf -dA -fdebug-prefix-map=a=b" } */
+-/* { dg-final { scan-assembler "DW_AT_producer: \"GNU C" { target { { { ! *-*-solaris2* } || gas } && { { ! hppa*64*-*-* } && { ! powerpc-ibm-aix* } } } } } } */
+-/* { dg-final { scan-assembler "\"GNU C\[^\\n\\r\]+ DW_AT_producer" { target { { *-*-solaris2* && { ! gas } } || { hppa*64*-*-* } } } } } */
++/* { dg-options "-O2 -gdwarf -dA -fno-merge-debug-strings -fdebug-prefix-map=a=b" } */
++/* { dg-final { scan-assembler "\"GNU C\[^\\n\\r\]+ DW_AT_producer" } } */
+ /* { dg-final { scan-assembler-not "debug-prefix-map" } } */
+ 
+ void func (void)
+Index: gcc/testsuite/ChangeLog
+===================================================================
+--- a/src/gcc/testsuite/ChangeLog	(.../tags/gcc_7_3_0_release)
++++ b/src/gcc/testsuite/ChangeLog	(.../branches/gcc-7-branch)
+@@ -1,3 +1,117 @@
++2018-02-07  Steven G. Kargl  <kargl@gcc.gnu.org>
++
++	PR fortran/82994
++	* gfortran.dg/deallocate_error_3.f90: New test.
++	* gfortran.dg/deallocate_error_4.f90: New test.
++
++2018-02-07  Steven G. Kargl  <kargl@gcc.gnu.org>
++
++	PR fortran/82049
++	* gfortran.dg/assumed_charlen_parameter.f90: New test.
++
++2018-02-07  Bill Schmidt  <wschmidt@linux.vnet.ibm.com>
++
++	Backport from mainline
++	2018-02-06  Bill Schmidt  <wschmidt@linux.vnet.ibm.com>
++
++	* gcc.target/powerpc/safe-indirect-jump-1.c: Detect deprecation
++	warning for -mno-speculate-indirect-jumps.
++	* gcc.target/powerpc/safe-indirect-jump-2.c: Likewise.
++	* gcc.target/powerpc/safe-indirect-jump-3.c: Likewise.
++	* gcc.target/powerpc/safe-indirect-jump-4.c: Likewise.
++	* gcc.target/powerpc/safe-indirect-jump-5.c: Likewise.
++	* gcc.target/powerpc/safe-indirect-jump-6.c: Likewise.
++	* gcc.target/powerpc/safe-indirect-jump-7.c: Likewise.
++
++2018-02-06  Rainer Orth  <ro@CeBiTec.Uni-Bielefeld.DE>
++
++	PR target/79975
++	* gcc.dg/rtl/x86_64/final.c: Add -fdwarf2-cfi-asm to dg-options.
++
++2017-02-02  Uros Bizjak  <ubizjak@gmail.com>
++
++	* gfortran.dg/dec_parameter_1.f (sub1): Remove statement with no effect.
++	* gfortran.dg/dec_parameter_2.f90 (sub1): Ditto.
++
++2018-02-01  Renlin Li  <renlin.li@arm.com>
++
++	Backport from mainline
++	2018-02-01  Richard Sandiford  <richard.sandiford@linaro.org>
++
++	PR target/83370
++	* gcc.target/aarch64/pr83370.c: New.
++
++2018-02-01  Richard Biener  <rguenther@suse.de>
++
++	Backport from mainline
++	2017-11-02  Richard Biener  <rguenther@suse.de>
++
++	PR tree-optimization/82795
++	* gcc.target/i386/pr82795.c: New testcase.
++
++2018-02-01  Rainer Orth  <ro@CeBiTec.Uni-Bielefeld.DE>
++
++	Backport from mainline
++	2018-01-12  Rainer Orth  <ro@CeBiTec.Uni-Bielefeld.DE>
++
++	* lib/target-supports.exp (check_effective_target_avx512f): Also
++	check for __builtin_ia32_addsd_round,
++	__builtin_ia32_getmantsd_round.
++	* gcc.target/i386/i386.exp (check_effective_target_avx512f):
++	Remove.
++
++2018-01-31  Eric Botcazou  <ebotcazou@adacore.com>
++
++	* gcc.c-torture/execute/20180131-1.c: New test.
++
++2018-01-29  Alan Modra  <amodra@gmail.com>
++
++	PR target/84033
++	* gcc.target/powerpc/swaps-p8-46.c: New.
++
++2018-01-26  Segher Boessenkool  <segher@kernel.crashing.org>
++
++	Backport from trunk
++	2018-01-26  Segher Boessenkool  <segher@kernel.crashing.org>
++
++	* gcc.target/powerpc/safe-indirect-jump-1.c: Build on all targets.
++	Make expected output depend on whether we expect sibcalls or not.
++	* gcc.target/powerpc/safe-indirect-jump-8.c: Delete (merged into
++	safe-indirect-jump-1.c).
++
++	Backport from trunk
++	2018-01-21  Bill Schmidt  <wschmidt@linux.vnet.ibm.com>
++
++	PR target/83946
++	* gcc.target/powerpc/safe-indirect-jump-8.c: Skip for AIX.
++
++2018-01-26  Nathan Sidwell  <nathan@acm.org>
++
++	PR c++/82878
++	* g++.dg/cpp0x/pr82878.C: New.
++	* g++.dg/cpp1z/inh-ctor38.C: Check moves too.
++
++2018-01-26  Jakub Jelinek  <jakub@redhat.com>
++
++	PR rtl-optimization/83985
++	* gcc.dg/pr83985.c: New test.
++
++2018-01-25  Michael Meissner  <meissner@linux.vnet.ibm.com>
++
++	Back port from trunk
++	2018-01-22  Michael Meissner  <meissner@linux.vnet.ibm.com>
++
++	PR target/83862
++	* gcc.target/powerpc/pr83862.c: New test.
++
++2018-01-25  Peter Bergner  <bergner@vnet.ibm.com>
++
++	Back port from mainline
++	2018-01-10  Peter Bergner  <bergner@vnet.ibm.com>
++
++	PR target/83399
++	* gcc.target/powerpc/pr83399.c: New test.
++
+ 2018-01-25  Release Manager
+ 
+ 	* GCC 7.3.0 released.
+Index: gcc/testsuite/g++.dg/cpp0x/constexpr-list2.C
+===================================================================
+--- a/src/gcc/testsuite/g++.dg/cpp0x/constexpr-list2.C	(.../tags/gcc_7_3_0_release)
++++ b/src/gcc/testsuite/g++.dg/cpp0x/constexpr-list2.C	(.../branches/gcc-7-branch)
+@@ -0,0 +1,20 @@
++// PR c++/82461
++// { dg-do compile { target c++11 } }
++
++class A {
++private:
++public:
++  constexpr A() {}
++  ~A() {}
++};
++
++class B {
++private:
++  A  a;
++public:
++  constexpr B() : a{} {}
++// works
++// constexpr B() : a() {}
++
++  ~B() {}
++};
+Index: gcc/testsuite/g++.dg/cpp0x/pr82878.C
+===================================================================
+--- a/src/gcc/testsuite/g++.dg/cpp0x/pr82878.C	(.../tags/gcc_7_3_0_release)
++++ b/src/gcc/testsuite/g++.dg/cpp0x/pr82878.C	(.../branches/gcc-7-branch)
+@@ -0,0 +1,20 @@
++// { dg-do compile { target c++11 } }
++// { dg-additional-options "-O" }
++// pr 82878 erroneously unwrapped a reference parm in the lambda::_FUN
++// thunk.
++
++struct A {
++  ~A();
++  operator int ();
++};
++
++void baz ();
++
++void
++bar (A b)
++{
++  void (*lam) (A) = [](A) { baz (); };
++
++  if (auto c = b)
++    lam (c);
++}
+Index: gcc/testsuite/g++.dg/cpp1z/inh-ctor38.C
+===================================================================
+--- a/src/gcc/testsuite/g++.dg/cpp1z/inh-ctor38.C	(.../tags/gcc_7_3_0_release)
++++ b/src/gcc/testsuite/g++.dg/cpp1z/inh-ctor38.C	(.../branches/gcc-7-branch)
+@@ -1,17 +1,19 @@
+ // { dg-do run { target c++11 } }
+ // PR78495 failed to propagate pass-by-value struct to base ctor.
+ 
++static int moves = 0;
++
+ struct Ptr {
+   void *ptr = 0;
+ 
+   Ptr() {}
+   Ptr(Ptr const&) = delete;
+-  Ptr(Ptr&& other) : ptr (other.ptr) {}
++  Ptr(Ptr&& other) : ptr (other.ptr) {moves++;}
+ };
+ 
+ struct Base {
+   Ptr val;
+-  Base(Ptr val_) : val(static_cast<Ptr&&>(val_)) {}
++  Base(Ptr val_);
+ };
+ 
+ struct Derived: Base {
+@@ -27,5 +29,13 @@
+ }
+ 
+ int main () {
+-  return Foo () != 0;
++  if (Foo ())
++    return 1;
++
++  if (moves != 2)
++    return 2;
++
++  return 0;
+ }
++
++Base::Base(Ptr val_) : val(static_cast<Ptr&&>(val_)) {}
+Index: gcc/cp/constexpr.c
+===================================================================
+--- a/src/gcc/cp/constexpr.c	(.../tags/gcc_7_3_0_release)
++++ b/src/gcc/cp/constexpr.c	(.../branches/gcc-7-branch)
+@@ -5627,7 +5627,8 @@
+       return RECUR (TREE_OPERAND (t, 1), want_rval);
+ 
+     case TARGET_EXPR:
+-      if (!literal_type_p (TREE_TYPE (t)))
++      if (!TARGET_EXPR_DIRECT_INIT_P (t)
++	  && !literal_type_p (TREE_TYPE (t)))
+ 	{
+ 	  if (flags & tf_error)
+ 	    {
+Index: gcc/cp/ChangeLog
+===================================================================
+--- a/src/gcc/cp/ChangeLog	(.../tags/gcc_7_3_0_release)
++++ b/src/gcc/cp/ChangeLog	(.../branches/gcc-7-branch)
+@@ -1,3 +1,18 @@
++2018-01-29  Jason Merrill  <jason@redhat.com>
++
++	PR c++/82461 - constexpr list-initialized member
++	* constexpr.c (potential_constant_expression_1): Check
++	TARGET_EXPR_DIRECT_INIT_P.
++
++2018-01-26  Nathan Sidwell  <nathan@acm.org>
++
++	PR c++/82878
++	PR c++/78495
++	* call.c (build_call_a): Don't set CALL_FROM_THUNK_P for inherited
++	ctor.
++	* cp-gimplify.c	(cp_genericize_r): Restore THUNK dereference
++	inhibibition check removed in previous c++/78495 change.
++
+ 2018-01-25  Release Manager
+ 
+ 	* GCC 7.3.0 released.
+Index: gcc/cp/cp-gimplify.c
+===================================================================
+--- a/src/gcc/cp/cp-gimplify.c	(.../tags/gcc_7_3_0_release)
++++ b/src/gcc/cp/cp-gimplify.c	(.../branches/gcc-7-branch)
+@@ -1107,6 +1107,14 @@
+       && omp_var_to_track (stmt))
+     omp_cxx_notice_variable (wtd->omp_ctx, stmt);
+ 
++  /* Don't dereference parms in a thunk, pass the references through. */
++  if ((TREE_CODE (stmt) == CALL_EXPR && CALL_FROM_THUNK_P (stmt))
++      || (TREE_CODE (stmt) == AGGR_INIT_EXPR && AGGR_INIT_FROM_THUNK_P (stmt)))
++    {
++      *walk_subtrees = 0;
++      return NULL;
++    }
++
+   /* Dereference invisible reference parms.  */
+   if (wtd->handle_invisiref_parm_p && is_invisiref_parm (stmt))
+     {
+Index: gcc/cp/call.c
+===================================================================
+--- a/src/gcc/cp/call.c	(.../tags/gcc_7_3_0_release)
++++ b/src/gcc/cp/call.c	(.../branches/gcc-7-branch)
+@@ -375,18 +375,10 @@
+ 
+   TREE_HAS_CONSTRUCTOR (function) = (decl && DECL_CONSTRUCTOR_P (decl));
+ 
+-  if (current_function_decl && decl
+-      && flag_new_inheriting_ctors
+-      && DECL_INHERITED_CTOR (current_function_decl)
+-      && (DECL_INHERITED_CTOR (current_function_decl)
+-	  == DECL_CLONED_FUNCTION (decl)))
+-    /* Pass arguments directly to the inherited constructor.  */
+-    CALL_FROM_THUNK_P (function) = true;
+-
+   /* Don't pass empty class objects by value.  This is useful
+      for tags in STL, which are used to control overload resolution.
+      We don't need to handle other cases of copying empty classes.  */
+-  else if (! decl || ! DECL_BUILT_IN (decl))
++  if (! decl || ! DECL_BUILT_IN (decl))
+     for (i = 0; i < n; i++)
+       {
+ 	tree arg = CALL_EXPR_ARG (function, i);
+Index: gcc/cp/lambda.c
+===================================================================
+--- a/src/gcc/cp/lambda.c	(.../tags/gcc_7_3_0_release)
++++ b/src/gcc/cp/lambda.c	(.../branches/gcc-7-branch)
+@@ -1072,7 +1072,6 @@
+       }
+   }
+ 
+-
+   if (generic_lambda_p)
+     {
+       if (decltype_call)
+Index: gcc/fortran/ChangeLog
+===================================================================
+--- a/src/gcc/fortran/ChangeLog	(.../tags/gcc_7_3_0_release)
++++ b/src/gcc/fortran/ChangeLog	(.../branches/gcc-7-branch)
+@@ -1,3 +1,14 @@
++2018-02-07  Steven G. Kargl  <kargl@gcc.gnu.org>
++
++	PR fortran/82994
++	* match.c (gfc_match_deallocate): Check for NULL pointer.
++
++2018-02-07  Steven G. Kargl  <kargl@gcc.gnu.org>
++
++	PR fortran/82049
++	* match.c (gfc_match_type_spec): If the charlen is non-NULL, then
++	try to resolve it.  While here return early if possible.
++
+ 2018-01-25  Release Manager
+ 
+ 	* GCC 7.3.0 released.
+Index: gcc/fortran/match.c
+===================================================================
+--- a/src/gcc/fortran/match.c	(.../tags/gcc_7_3_0_release)
++++ b/src/gcc/fortran/match.c	(.../branches/gcc-7-branch)
+@@ -2001,12 +2001,17 @@
+ {
+   match m;
+   locus old_locus;
+-  char name[GFC_MAX_SYMBOL_LEN + 1];
++  char c, name[GFC_MAX_SYMBOL_LEN + 1];
+ 
+   gfc_clear_ts (ts);
+   gfc_gobble_whitespace ();
+   old_locus = gfc_current_locus;
+ 
++  /* If c isn't [a-z], then return immediately.  */
++  c = gfc_peek_ascii_char ();
++  if (!ISALPHA(c))
++    return MATCH_NO;
++
+   if (match_derived_type_spec (ts) == MATCH_YES)
+     {
+       /* Enforce F03:C401.  */
+@@ -2045,6 +2050,8 @@
+       ts->type = BT_CHARACTER;
+ 
+       m = gfc_match_char_spec (ts);
++      if (ts->u.cl && ts->u.cl->length)
++	gfc_resolve_expr (ts->u.cl->length);
+ 
+       if (m == MATCH_NO)
+ 	m = MATCH_YES;
+@@ -4404,8 +4411,8 @@
+ 	   && (tail->expr->ref->type == REF_COMPONENT
+ 	       || tail->expr->ref->type == REF_ARRAY));
+       if (sym && sym->ts.type == BT_CLASS)
+-	b2 = !(CLASS_DATA (sym)->attr.allocatable
+-	       || CLASS_DATA (sym)->attr.class_pointer);
++	b2 = !(CLASS_DATA (sym) && (CLASS_DATA (sym)->attr.allocatable
++	       || CLASS_DATA (sym)->attr.class_pointer));
+       else
+ 	b2 = sym && !(sym->attr.allocatable || sym->attr.pointer
+ 		      || sym->attr.proc_pointer);
+Index: gcc/configure.ac
+===================================================================
+--- a/src/gcc/configure.ac	(.../tags/gcc_7_3_0_release)
++++ b/src/gcc/configure.ac	(.../branches/gcc-7-branch)
+@@ -2946,6 +2946,14 @@
+     [elf,2,12,0], [--fatal-warnings],
+     [.section .rodata.str, "aMS", %progbits, 1])
+ fi
++case "$target" in
++  i?86-*-solaris2.10* | x86_64-*-solaris2.10*)
++    # SHF_MERGE support in Solaris 10/x86 ld is broken.
++    if test x"$gnu_ld" = xno; then
++      gcc_cv_as_shf_merge=no
++    fi
++    ;;
++esac
+ AC_DEFINE_UNQUOTED(HAVE_GAS_SHF_MERGE,
+   [`if test $gcc_cv_as_shf_merge = yes; then echo 1; else echo 0; fi`],
+ [Define 0/1 if your assembler supports marking sections with SHF_MERGE flag.])
+Index: gcc/tree-if-conv.c
+===================================================================
+--- a/src/gcc/tree-if-conv.c	(.../tags/gcc_7_3_0_release)
++++ b/src/gcc/tree-if-conv.c	(.../branches/gcc-7-branch)
+@@ -2248,10 +2248,7 @@
+ 					 TREE_OPERAND (cond, 0),
+ 					 TREE_OPERAND (cond, 1));
+ 		  else
+-		    {
+-		      gcc_assert (TREE_CODE (cond) == SSA_NAME);
+-		      mask = cond;
+-		    }
++		    mask = cond;
+ 
+ 		  if (swap)
+ 		    {
+Index: gcc/tree-vect-stmts.c
+===================================================================
+--- a/src/gcc/tree-vect-stmts.c	(.../tags/gcc_7_3_0_release)
++++ b/src/gcc/tree-vect-stmts.c	(.../branches/gcc-7-branch)
+@@ -2753,7 +2753,7 @@
+       if (cfn != CFN_LAST)
+ 	fndecl = targetm.vectorize.builtin_vectorized_function
+ 	  (cfn, vectype_out, vectype_in);
+-      else
++      else if (callee)
+ 	fndecl = targetm.vectorize.builtin_md_vectorized_function
+ 	  (callee, vectype_out, vectype_in);
+     }
+Index: gcc/combine.c
+===================================================================
+--- a/src/gcc/combine.c	(.../tags/gcc_7_3_0_release)
++++ b/src/gcc/combine.c	(.../branches/gcc-7-branch)
+@@ -11322,8 +11322,15 @@
+ 	    x = gen_rtx_LSHIFTRT (inner_mode, XEXP (x, 0), GEN_INT (start));
+ 	  else
+ 	    x = XEXP (x, 0);
++
+ 	  if (mode != inner_mode)
+-	    x = gen_lowpart_SUBREG (mode, x);
++	    {
++	      if (REG_P (x) && HARD_REGISTER_P (x)
++		  && !can_change_dest_mode (x, 0, mode))
++		continue;
++
++	      x = gen_lowpart_SUBREG (mode, x);
++	    }
+ 	}
+       else if (GET_CODE (x) == ZERO_EXTEND
+ 	       && SCALAR_INT_MODE_P (mode)
+@@ -11335,7 +11342,13 @@
+ 	  size = GET_MODE_PRECISION (GET_MODE (XEXP (x, 0)));
+ 	  x = SUBREG_REG (XEXP (x, 0));
+ 	  if (GET_MODE (x) != mode)
+-	    x = gen_lowpart_SUBREG (mode, x);
++	    {
++	      if (REG_P (x) && HARD_REGISTER_P (x)
++		  && !can_change_dest_mode (x, 0, mode))
++		continue;
++
++	      x = gen_lowpart_SUBREG (mode, x);
++	    }
+ 	}
+       else if (GET_CODE (x) == ZERO_EXTEND
+ 	       && SCALAR_INT_MODE_P (mode)
+@@ -13081,8 +13094,11 @@
+   if (REG_P (dest))
+     {
+       /* If we are setting the whole register, we know its value.  Otherwise
+-	 show that we don't know the value.  We can handle SUBREG in
+-	 some cases.  */
++	 show that we don't know the value.  We can handle a SUBREG if it's
++	 the low part, but we must be careful with paradoxical SUBREGs on
++	 RISC architectures because we cannot strip e.g. an extension around
++	 a load and record the naked load since the RTL middle-end considers
++	 that the upper bits are defined according to LOAD_EXTEND_OP.  */
+       if (GET_CODE (setter) == SET && dest == SET_DEST (setter))
+ 	record_value_for_reg (dest, record_dead_insn, SET_SRC (setter));
+       else if (GET_CODE (setter) == SET
+@@ -13091,8 +13107,11 @@
+ 	       && GET_MODE_PRECISION (GET_MODE (dest)) <= BITS_PER_WORD
+ 	       && subreg_lowpart_p (SET_DEST (setter)))
+ 	record_value_for_reg (dest, record_dead_insn,
+-			      gen_lowpart (GET_MODE (dest),
+-						       SET_SRC (setter)));
++			      WORD_REGISTER_OPERATIONS
++			      && paradoxical_subreg_p (SET_DEST (setter))
++			      ? SET_SRC (setter)
++			      : gen_lowpart (GET_MODE (dest),
++					     SET_SRC (setter)));
+       else
+ 	record_value_for_reg (dest, record_dead_insn, NULL_RTX);
+     }
+Index: gcc/config/i386/i386.md
+===================================================================
+--- a/src/gcc/config/i386/i386.md	(.../tags/gcc_7_3_0_release)
++++ b/src/gcc/config/i386/i386.md	(.../branches/gcc-7-branch)
+@@ -8584,14 +8584,14 @@
+ })
+ 
+ (define_insn "*andndi3_doubleword"
+-  [(set (match_operand:DI 0 "register_operand" "=r,&r")
++  [(set (match_operand:DI 0 "register_operand" "=&r,r,r,&r")
+ 	(and:DI
+-	  (not:DI (match_operand:DI 1 "register_operand" "r,0"))
+-	  (match_operand:DI 2 "nonimmediate_operand" "rm,rm")))
++	  (not:DI (match_operand:DI 1 "register_operand" "r,0,r,0"))
++	  (match_operand:DI 2 "nonimmediate_operand" "rm,rm,0,rm")))
+    (clobber (reg:CC FLAGS_REG))]
+   "!TARGET_64BIT && TARGET_STV && TARGET_SSE2"
+   "#"
+-  [(set_attr "isa" "bmi,*")])
++  [(set_attr "isa" "bmi,bmi,bmi,*")])
+ 
+ (define_split
+   [(set (match_operand:DI 0 "register_operand")
+Index: gcc/config/i386/i386.c
+===================================================================
+--- a/src/gcc/config/i386/i386.c	(.../tags/gcc_7_3_0_release)
++++ b/src/gcc/config/i386/i386.c	(.../branches/gcc-7-branch)
+@@ -12051,16 +12051,16 @@
+ /* Fills in the label name that should be used for the indirect thunk.  */
+ 
+ static void
+-indirect_thunk_name (char name[32], int regno, bool need_bnd_p,
+-		     bool ret_p)
++indirect_thunk_name (char name[32], unsigned int regno,
++		     bool need_bnd_p, bool ret_p)
+ {
+-  if (regno >= 0 && ret_p)
++  if (regno != INVALID_REGNUM && ret_p)
+     gcc_unreachable ();
+ 
+   if (USE_HIDDEN_LINKONCE)
+     {
+       const char *bnd = need_bnd_p ? "_bnd" : "";
+-      if (regno >= 0)
++      if (regno != INVALID_REGNUM)
+ 	{
+ 	  const char *reg_prefix;
+ 	  if (LEGACY_INT_REGNO_P (regno))
+@@ -12078,7 +12078,7 @@
+     }
+   else
+     {
+-      if (regno >= 0)
++      if (regno != INVALID_REGNUM)
+ 	{
+ 	  if (need_bnd_p)
+ 	    ASM_GENERATE_INTERNAL_LABEL (name, "LITBR", regno);
+@@ -12130,7 +12130,7 @@
+  */
+ 
+ static void
+-output_indirect_thunk (bool need_bnd_p, int regno)
++output_indirect_thunk (bool need_bnd_p, unsigned int regno)
+ {
+   char indirectlabel1[32];
+   char indirectlabel2[32];
+@@ -12160,7 +12160,7 @@
+ 
+   ASM_OUTPUT_INTERNAL_LABEL (asm_out_file, indirectlabel2);
+ 
+-  if (regno >= 0)
++  if (regno != INVALID_REGNUM)
+     {
+       /* MOV.  */
+       rtx xops[2];
+@@ -12184,12 +12184,12 @@
+ }
+ 
+ /* Output a funtion with a call and return thunk for indirect branch.
+-   If BND_P is true, the BND prefix is needed.   If REGNO != -1,  the
+-   function address is in REGNO.  Otherwise, the function address is
++   If BND_P is true, the BND prefix is needed.  If REGNO != INVALID_REGNUM,
++   the function address is in REGNO.  Otherwise, the function address is
+    on the top of stack.  */
+ 
+ static void
+-output_indirect_thunk_function (bool need_bnd_p, int regno)
++output_indirect_thunk_function (bool need_bnd_p, unsigned int regno)
+ {
+   char name[32];
+   tree decl;
+@@ -12238,7 +12238,7 @@
+ 	ASM_OUTPUT_LABEL (asm_out_file, name);
+       }
+ 
+-  if (regno < 0)
++  if (regno == INVALID_REGNUM)
+     {
+       /* Create alias for __x86.return_thunk/__x86.return_thunk_bnd.  */
+       char alias[32];
+@@ -12312,16 +12312,16 @@
+ ix86_code_end (void)
+ {
+   rtx xops[2];
+-  int regno;
++  unsigned int regno;
+ 
+   if (indirect_thunk_needed)
+-    output_indirect_thunk_function (false, -1);
++    output_indirect_thunk_function (false, INVALID_REGNUM);
+   if (indirect_thunk_bnd_needed)
+-    output_indirect_thunk_function (true, -1);
++    output_indirect_thunk_function (true, INVALID_REGNUM);
+ 
+   for (regno = FIRST_REX_INT_REG; regno <= LAST_REX_INT_REG; regno++)
+     {
+-      int i = regno - FIRST_REX_INT_REG + LAST_INT_REG + 1;
++      unsigned int i = regno - FIRST_REX_INT_REG + LAST_INT_REG + 1;
+       if ((indirect_thunks_used & (1 << i)))
+ 	output_indirect_thunk_function (false, regno);
+ 
+@@ -14061,7 +14061,6 @@
+ {
+   struct machine_function *m = cfun->machine;
+   rtx insn, t;
+-  struct ix86_frame frame;
+   HOST_WIDE_INT allocate;
+   bool int_registers_saved;
+   bool sse_registers_saved;
+@@ -14085,7 +14084,7 @@
+   m->fs.sp_valid = true;
+ 
+   ix86_compute_frame_layout ();
+-  frame = m->frame;
++  const struct ix86_frame &frame = cfun->machine->frame;
+ 
+   if (!TARGET_64BIT && ix86_function_ms_hook_prologue (current_function_decl))
+     {
+@@ -14748,13 +14747,12 @@
+ {
+   struct machine_function *m = cfun->machine;
+   struct machine_frame_state frame_state_save = m->fs;
+-  struct ix86_frame frame;
+   bool restore_regs_via_mov;
+   bool using_drap;
+ 
+   ix86_finalize_stack_realign_flags ();
+   ix86_compute_frame_layout ();
+-  frame = m->frame;
++  const struct ix86_frame &frame = cfun->machine->frame;
+ 
+   m->fs.sp_valid = (!frame_pointer_needed
+ 		    || (crtl->sp_is_unchanging
+@@ -14796,11 +14794,13 @@
+ 				  + UNITS_PER_WORD);
+     }
+ 
++  HOST_WIDE_INT reg_save_offset = frame.reg_save_offset;
++
+   /* Special care must be taken for the normal return case of a function
+      using eh_return: the eax and edx registers are marked as saved, but
+      not restored along this path.  Adjust the save location to match.  */
+   if (crtl->calls_eh_return && style != 2)
+-    frame.reg_save_offset -= 2 * UNITS_PER_WORD;
++    reg_save_offset -= 2 * UNITS_PER_WORD;
+ 
+   /* EH_RETURN requires the use of moves to function properly.  */
+   if (crtl->calls_eh_return)
+@@ -14816,11 +14816,11 @@
+   else if (TARGET_EPILOGUE_USING_MOVE
+ 	   && cfun->machine->use_fast_prologue_epilogue
+ 	   && (frame.nregs > 1
+-	       || m->fs.sp_offset != frame.reg_save_offset))
++	       || m->fs.sp_offset != reg_save_offset))
+     restore_regs_via_mov = true;
+   else if (frame_pointer_needed
+ 	   && !frame.nregs
+-	   && m->fs.sp_offset != frame.reg_save_offset)
++	   && m->fs.sp_offset != reg_save_offset)
+     restore_regs_via_mov = true;
+   else if (frame_pointer_needed
+ 	   && TARGET_USE_LEAVE
+@@ -14858,7 +14858,7 @@
+       rtx t;
+ 
+       if (frame.nregs)
+-	ix86_emit_restore_regs_using_mov (frame.reg_save_offset, style == 2);
++	ix86_emit_restore_regs_using_mov (reg_save_offset, style == 2);
+ 
+       /* eh_return epilogues need %ecx added to the stack pointer.  */
+       if (style == 2)
+@@ -14948,19 +14948,19 @@
+ 	 epilogues.  */
+       if (!m->fs.sp_valid
+  	  || (TARGET_SEH
+-	      && (m->fs.sp_offset - frame.reg_save_offset
++	      && (m->fs.sp_offset - reg_save_offset
+ 		  >= SEH_MAX_FRAME_SIZE)))
+ 	{
+ 	  pro_epilogue_adjust_stack (stack_pointer_rtx, hard_frame_pointer_rtx,
+ 				     GEN_INT (m->fs.fp_offset
+-					      - frame.reg_save_offset),
++					      - reg_save_offset),
+ 				     style, false);
+ 	}
+-      else if (m->fs.sp_offset != frame.reg_save_offset)
++      else if (m->fs.sp_offset != reg_save_offset)
+ 	{
+ 	  pro_epilogue_adjust_stack (stack_pointer_rtx, stack_pointer_rtx,
+ 				     GEN_INT (m->fs.sp_offset
+-					      - frame.reg_save_offset),
++					      - reg_save_offset),
+ 				     style,
+ 				     m->fs.cfa_reg == stack_pointer_rtx);
+ 	}
+@@ -29146,7 +29146,8 @@
+ 	{
+ 	  bool need_thunk = (cfun->machine->function_return_type
+ 			     == indirect_branch_thunk);
+-	  indirect_thunk_name (thunk_name, -1, need_bnd_p, true);
++	  indirect_thunk_name (thunk_name, INVALID_REGNUM, need_bnd_p,
++			       true);
+ 	  if (need_bnd_p)
+ 	    {
+ 	      indirect_thunk_bnd_needed |= need_thunk;
+@@ -29159,7 +29160,7 @@
+ 	    }
+ 	}
+       else
+-	output_indirect_thunk (need_bnd_p, -1);
++	output_indirect_thunk (need_bnd_p, INVALID_REGNUM);
+ 
+       return "";
+     }
+Index: gcc/config/m68k/m68k.c
+===================================================================
+--- a/src/gcc/config/m68k/m68k.c	(.../tags/gcc_7_3_0_release)
++++ b/src/gcc/config/m68k/m68k.c	(.../branches/gcc-7-branch)
+@@ -185,6 +185,8 @@
+ static void m68k_init_sync_libfuncs (void) ATTRIBUTE_UNUSED;
+ static enum flt_eval_method
+ m68k_excess_precision (enum excess_precision_type);
++static machine_mode m68k_promote_function_mode (const_tree, machine_mode,
++						int *, const_tree, int);
+ 
+ /* Initialize the GCC target structure.  */
+ 
+@@ -332,6 +334,9 @@
+ #undef TARGET_ATOMIC_TEST_AND_SET_TRUEVAL
+ #define TARGET_ATOMIC_TEST_AND_SET_TRUEVAL 128
+ 
++#undef TARGET_PROMOTE_FUNCTION_MODE
++#define TARGET_PROMOTE_FUNCTION_MODE m68k_promote_function_mode
++
+ static const struct attribute_spec m68k_attribute_table[] =
+ {
+   /* { name, min_len, max_len, decl_req, type_req, fn_type_req, handler,
+@@ -6571,4 +6576,20 @@
+   return FLT_EVAL_METHOD_UNPREDICTABLE;
+ }
+ 
++/* Implement TARGET_PROMOTE_FUNCTION_MODE.  */
++
++static machine_mode
++m68k_promote_function_mode (const_tree type, machine_mode mode,
++                            int *punsignedp ATTRIBUTE_UNUSED,
++                            const_tree fntype ATTRIBUTE_UNUSED,
++                            int for_return)
++{
++  /* Promote libcall arguments narrower than int to match the normal C
++     ABI (for which promotions are handled via
++     TARGET_PROMOTE_PROTOTYPES).  */
++  if (type == NULL_TREE && !for_return && (mode == QImode || mode == HImode))
++    return SImode;
++  return mode;
++}
++
+ #include "gt-m68k.h"
+Index: gcc/config/aarch64/constraints.md
+===================================================================
+--- a/src/gcc/config/aarch64/constraints.md	(.../tags/gcc_7_3_0_release)
++++ b/src/gcc/config/aarch64/constraints.md	(.../branches/gcc-7-branch)
+@@ -21,8 +21,8 @@
+ (define_register_constraint "k" "STACK_REG"
+   "@internal The stack register.")
+ 
+-(define_register_constraint "Ucs" "CALLER_SAVE_REGS"
+-  "@internal The caller save registers.")
++(define_register_constraint "Ucs" "TAILCALL_ADDR_REGS"
++  "@internal Registers suitable for an indirect tail call")
+ 
+ (define_register_constraint "w" "FP_REGS"
+   "Floating point and SIMD vector registers.")
+Index: gcc/config/aarch64/aarch64.c
+===================================================================
+--- a/src/gcc/config/aarch64/aarch64.c	(.../tags/gcc_7_3_0_release)
++++ b/src/gcc/config/aarch64/aarch64.c	(.../branches/gcc-7-branch)
+@@ -5721,7 +5721,7 @@
+ {
+   switch (regclass)
+     {
+-    case CALLER_SAVE_REGS:
++    case TAILCALL_ADDR_REGS:
+     case POINTER_REGS:
+     case GENERAL_REGS:
+     case ALL_REGS:
+@@ -7799,10 +7799,10 @@
+     = aarch64_tune_params.regmove_cost;
+ 
+   /* Caller save and pointer regs are equivalent to GENERAL_REGS.  */
+-  if (to == CALLER_SAVE_REGS || to == POINTER_REGS)
++  if (to == TAILCALL_ADDR_REGS || to == POINTER_REGS)
+     to = GENERAL_REGS;
+ 
+-  if (from == CALLER_SAVE_REGS || from == POINTER_REGS)
++  if (from == TAILCALL_ADDR_REGS || from == POINTER_REGS)
+     from = GENERAL_REGS;
+ 
+   /* Moving between GPR and stack cost is the same as GP2GP.  */
+Index: gcc/config/aarch64/aarch64.h
+===================================================================
+--- a/src/gcc/config/aarch64/aarch64.h	(.../tags/gcc_7_3_0_release)
++++ b/src/gcc/config/aarch64/aarch64.h	(.../branches/gcc-7-branch)
+@@ -439,7 +439,7 @@
+ enum reg_class
+ {
+   NO_REGS,
+-  CALLER_SAVE_REGS,
++  TAILCALL_ADDR_REGS,
+   GENERAL_REGS,
+   STACK_REG,
+   POINTER_REGS,
+@@ -454,7 +454,7 @@
+ #define REG_CLASS_NAMES				\
+ {						\
+   "NO_REGS",					\
+-  "CALLER_SAVE_REGS",				\
++  "TAILCALL_ADDR_REGS",				\
+   "GENERAL_REGS",				\
+   "STACK_REG",					\
+   "POINTER_REGS",				\
+@@ -466,7 +466,7 @@
+ #define REG_CLASS_CONTENTS						\
+ {									\
+   { 0x00000000, 0x00000000, 0x00000000 },	/* NO_REGS */		\
+-  { 0x0007ffff, 0x00000000, 0x00000000 },	/* CALLER_SAVE_REGS */	\
++  { 0x0004ffff, 0x00000000, 0x00000000 },	/* TAILCALL_ADDR_REGS */\
+   { 0x7fffffff, 0x00000000, 0x00000003 },	/* GENERAL_REGS */	\
+   { 0x80000000, 0x00000000, 0x00000000 },	/* STACK_REG */		\
+   { 0xffffffff, 0x00000000, 0x00000003 },	/* POINTER_REGS */	\
+Index: gcc/config/rs6000/rs6000-protos.h
+===================================================================
+--- a/src/gcc/config/rs6000/rs6000-protos.h	(.../tags/gcc_7_3_0_release)
++++ b/src/gcc/config/rs6000/rs6000-protos.h	(.../branches/gcc-7-branch)
+@@ -139,7 +139,6 @@
+ extern int rs6000_emit_cmove (rtx, rtx, rtx, rtx);
+ extern int rs6000_emit_vector_cond_expr (rtx, rtx, rtx, rtx, rtx, rtx);
+ extern void rs6000_emit_minmax (rtx, enum rtx_code, rtx, rtx);
+-extern void rs6000_split_signbit (rtx, rtx);
+ extern void rs6000_expand_atomic_compare_and_swap (rtx op[]);
+ extern void rs6000_expand_atomic_exchange (rtx op[]);
+ extern void rs6000_expand_atomic_op (enum rtx_code, rtx, rtx, rtx, rtx, rtx);
+Index: gcc/config/rs6000/rs6000.c
+===================================================================
+--- a/src/gcc/config/rs6000/rs6000.c	(.../tags/gcc_7_3_0_release)
++++ b/src/gcc/config/rs6000/rs6000.c	(.../branches/gcc-7-branch)
+@@ -5563,6 +5563,11 @@
+   if (TARGET_LINK_STACK == -1)
+     SET_TARGET_LINK_STACK (rs6000_cpu == PROCESSOR_PPC476 && flag_pic);
+ 
++  /* Deprecate use of -mno-speculate-indirect-jumps.  */
++  if (!rs6000_speculate_indirect_jumps)
++    warning (0, "%qs is deprecated and not recommended in any circumstances",
++	     "-mno-speculate-indirect-jumps");
++
+   return ret;
+ }
+ 
+@@ -23980,7 +23985,7 @@
+ 
+ 	    /* Fall through.  Must be [reg+reg].  */
+ 	  }
+-	if (VECTOR_MEM_ALTIVEC_P (GET_MODE (x))
++	if (VECTOR_MEM_ALTIVEC_OR_VSX_P (GET_MODE (x))
+ 	    && GET_CODE (tmp) == AND
+ 	    && GET_CODE (XEXP (tmp, 1)) == CONST_INT
+ 	    && INTVAL (XEXP (tmp, 1)) == -16)
+@@ -25907,49 +25912,6 @@
+     emit_move_insn (dest, target);
+ }
+ 
+-/* Split a signbit operation on 64-bit machines with direct move.  Also allow
+-   for the value to come from memory or if it is already loaded into a GPR.  */
+-
+-void
+-rs6000_split_signbit (rtx dest, rtx src)
+-{
+-  machine_mode d_mode = GET_MODE (dest);
+-  machine_mode s_mode = GET_MODE (src);
+-  rtx dest_di = (d_mode == DImode) ? dest : gen_lowpart (DImode, dest);
+-  rtx shift_reg = dest_di;
+-
+-  gcc_assert (FLOAT128_IEEE_P (s_mode) && TARGET_POWERPC64);
+-
+-  if (MEM_P (src))
+-    {
+-      rtx mem = (WORDS_BIG_ENDIAN
+-		 ? adjust_address (src, DImode, 0)
+-		 : adjust_address (src, DImode, 8));
+-      emit_insn (gen_rtx_SET (dest_di, mem));
+-    }
+-
+-  else
+-    {
+-      unsigned int r = reg_or_subregno (src);
+-
+-      if (INT_REGNO_P (r))
+-	shift_reg = gen_rtx_REG (DImode, r + (BYTES_BIG_ENDIAN == 0));
+-
+-      else
+-	{
+-	  /* Generate the special mfvsrd instruction to get it in a GPR.  */
+-	  gcc_assert (VSX_REGNO_P (r));
+-	  if (s_mode == KFmode)
+-	    emit_insn (gen_signbitkf2_dm2 (dest_di, src));
+-	  else
+-	    emit_insn (gen_signbittf2_dm2 (dest_di, src));
+-	}
+-    }
+-
+-  emit_insn (gen_lshrdi3 (dest_di, shift_reg, GEN_INT (63)));
+-  return;
+-}
+-
+ /* A subroutine of the atomic operation splitters.  Jump to LABEL if
+    COND is true.  Mark the jump as unlikely to be taken.  */
+ 
+@@ -41657,6 +41619,38 @@
+   return 1;
+ }
+ 
++/* Return 1 iff UID, known to reference a swap, is both fed by a load
++   and a feeder of a store.  */
++static unsigned int
++swap_feeds_both_load_and_store (swap_web_entry *insn_entry)
++{
++  rtx insn = insn_entry->insn;
++  struct df_insn_info *insn_info = DF_INSN_INFO_GET (insn);
++  df_ref def, use;
++  struct df_link *link = 0;
++  rtx_insn *load = 0, *store = 0;
++  bool fed_by_load = 0;
++  bool feeds_store = 0;
++
++  FOR_EACH_INSN_INFO_USE (use, insn_info)
++    {
++      link = DF_REF_CHAIN (use);
++      load = DF_REF_INSN (link->ref);
++      if (insn_is_load_p (load) && insn_is_swap_p (load))
++	fed_by_load = 1;
++    }
++
++  FOR_EACH_INSN_INFO_DEF (def, insn_info)
++    {
++      link = DF_REF_CHAIN (def);
++      store = DF_REF_INSN (link->ref);
++      if (insn_is_store_p (store) && insn_is_swap_p (store))
++	feeds_store = 1;
++    }
++
++  return fed_by_load && feeds_store;
++}
++
+ /* Return TRUE if insn is a swap fed by a load from the constant pool.  */
+ static bool
+ const_load_sequence_p (swap_web_entry *insn_entry, rtx insn)
+@@ -41860,6 +41854,7 @@
+ 	  {
+ 	  default:
+ 	    break;
++	  case UNSPEC_VBPERMQ:
+ 	  case UNSPEC_VMRGH_DIRECT:
+ 	  case UNSPEC_VMRGL_DIRECT:
+ 	  case UNSPEC_VPACK_SIGN_SIGN_SAT:
+@@ -43129,6 +43124,14 @@
+ 	  && !insn_entry[i].is_swap && !insn_entry[i].is_swappable)
+ 	root->web_not_optimizable = 1;
+ 
++      /* If we have a swap that is both fed by a permuting load
++	 and a feeder of a permuting store, then the optimization
++	 isn't appropriate.  (Consider vec_xl followed by vec_xst_be.)  */
++      else if (insn_entry[i].is_swap && !insn_entry[i].is_load
++	       && !insn_entry[i].is_store
++	       && swap_feeds_both_load_and_store (&insn_entry[i]))
++	root->web_not_optimizable = 1;
++
+       /* If we have permuting loads or stores that are not accompanied
+ 	 by a register swap, the optimization isn't appropriate.  */
+       else if (insn_entry[i].is_load && insn_entry[i].is_swap)
+Index: gcc/config/rs6000/vsx.md
+===================================================================
+--- a/src/gcc/config/rs6000/vsx.md	(.../tags/gcc_7_3_0_release)
++++ b/src/gcc/config/rs6000/vsx.md	(.../branches/gcc-7-branch)
+@@ -385,7 +385,7 @@
+ ;; VSX moves so they match first.
+ (define_insn_and_split "*vsx_le_perm_load_<mode>"
+   [(set (match_operand:VSX_D 0 "vsx_register_operand" "=<VSa>")
+-        (match_operand:VSX_D 1 "memory_operand" "Z"))]
++        (match_operand:VSX_D 1 "indexed_or_indirect_operand" "Z"))]
+   "!BYTES_BIG_ENDIAN && TARGET_VSX && !TARGET_P9_VECTOR"
+   "#"
+   "!BYTES_BIG_ENDIAN && TARGET_VSX && !TARGET_P9_VECTOR"
+@@ -408,7 +408,7 @@
+ 
+ (define_insn_and_split "*vsx_le_perm_load_<mode>"
+   [(set (match_operand:VSX_W 0 "vsx_register_operand" "=<VSa>")
+-        (match_operand:VSX_W 1 "memory_operand" "Z"))]
++        (match_operand:VSX_W 1 "indexed_or_indirect_operand" "Z"))]
+   "!BYTES_BIG_ENDIAN && TARGET_VSX && !TARGET_P9_VECTOR"
+   "#"
+   "!BYTES_BIG_ENDIAN && TARGET_VSX && !TARGET_P9_VECTOR"
+@@ -433,7 +433,7 @@
+ 
+ (define_insn_and_split "*vsx_le_perm_load_v8hi"
+   [(set (match_operand:V8HI 0 "vsx_register_operand" "=wa")
+-        (match_operand:V8HI 1 "memory_operand" "Z"))]
++        (match_operand:V8HI 1 "indexed_or_indirect_operand" "Z"))]
+   "!BYTES_BIG_ENDIAN && TARGET_VSX && !TARGET_P9_VECTOR"
+   "#"
+   "!BYTES_BIG_ENDIAN && TARGET_VSX && !TARGET_P9_VECTOR"
+@@ -462,7 +462,7 @@
+ 
+ (define_insn_and_split "*vsx_le_perm_load_v16qi"
+   [(set (match_operand:V16QI 0 "vsx_register_operand" "=wa")
+-        (match_operand:V16QI 1 "memory_operand" "Z"))]
++        (match_operand:V16QI 1 "indexed_or_indirect_operand" "Z"))]
+   "!BYTES_BIG_ENDIAN && TARGET_VSX && !TARGET_P9_VECTOR"
+   "#"
+   "!BYTES_BIG_ENDIAN && TARGET_VSX && !TARGET_P9_VECTOR"
+@@ -498,7 +498,7 @@
+    (set_attr "length" "8")])
+ 
+ (define_insn "*vsx_le_perm_store_<mode>"
+-  [(set (match_operand:VSX_D 0 "memory_operand" "=Z")
++  [(set (match_operand:VSX_D 0 "indexed_or_indirect_operand" "=Z")
+         (match_operand:VSX_D 1 "vsx_register_operand" "+<VSa>"))]
+   "!BYTES_BIG_ENDIAN && TARGET_VSX && !TARGET_P9_VECTOR"
+   "#"
+@@ -506,7 +506,7 @@
+    (set_attr "length" "12")])
+ 
+ (define_split
+-  [(set (match_operand:VSX_D 0 "memory_operand" "")
++  [(set (match_operand:VSX_D 0 "indexed_or_indirect_operand" "")
+         (match_operand:VSX_D 1 "vsx_register_operand" ""))]
+   "!BYTES_BIG_ENDIAN && TARGET_VSX && !TARGET_P9_VECTOR && !reload_completed"
+   [(set (match_dup 2)
+@@ -525,7 +525,7 @@
+ ;; The post-reload split requires that we re-permute the source
+ ;; register in case it is still live.
+ (define_split
+-  [(set (match_operand:VSX_D 0 "memory_operand" "")
++  [(set (match_operand:VSX_D 0 "indexed_or_indirect_operand" "")
+         (match_operand:VSX_D 1 "vsx_register_operand" ""))]
+   "!BYTES_BIG_ENDIAN && TARGET_VSX && !TARGET_P9_VECTOR && reload_completed"
+   [(set (match_dup 1)
+@@ -543,7 +543,7 @@
+   "")
+ 
+ (define_insn "*vsx_le_perm_store_<mode>"
+-  [(set (match_operand:VSX_W 0 "memory_operand" "=Z")
++  [(set (match_operand:VSX_W 0 "indexed_or_indirect_operand" "=Z")
+         (match_operand:VSX_W 1 "vsx_register_operand" "+<VSa>"))]
+   "!BYTES_BIG_ENDIAN && TARGET_VSX && !TARGET_P9_VECTOR"
+   "#"
+@@ -551,7 +551,7 @@
+    (set_attr "length" "12")])
+ 
+ (define_split
+-  [(set (match_operand:VSX_W 0 "memory_operand" "")
++  [(set (match_operand:VSX_W 0 "indexed_or_indirect_operand" "")
+         (match_operand:VSX_W 1 "vsx_register_operand" ""))]
+   "!BYTES_BIG_ENDIAN && TARGET_VSX && !TARGET_P9_VECTOR && !reload_completed"
+   [(set (match_dup 2)
+@@ -572,7 +572,7 @@
+ ;; The post-reload split requires that we re-permute the source
+ ;; register in case it is still live.
+ (define_split
+-  [(set (match_operand:VSX_W 0 "memory_operand" "")
++  [(set (match_operand:VSX_W 0 "indexed_or_indirect_operand" "")
+         (match_operand:VSX_W 1 "vsx_register_operand" ""))]
+   "!BYTES_BIG_ENDIAN && TARGET_VSX && !TARGET_P9_VECTOR && reload_completed"
+   [(set (match_dup 1)
+@@ -593,7 +593,7 @@
+   "")
+ 
+ (define_insn "*vsx_le_perm_store_v8hi"
+-  [(set (match_operand:V8HI 0 "memory_operand" "=Z")
++  [(set (match_operand:V8HI 0 "indexed_or_indirect_operand" "=Z")
+         (match_operand:V8HI 1 "vsx_register_operand" "+wa"))]
+   "!BYTES_BIG_ENDIAN && TARGET_VSX && !TARGET_P9_VECTOR"
+   "#"
+@@ -601,7 +601,7 @@
+    (set_attr "length" "12")])
+ 
+ (define_split
+-  [(set (match_operand:V8HI 0 "memory_operand" "")
++  [(set (match_operand:V8HI 0 "indexed_or_indirect_operand" "")
+         (match_operand:V8HI 1 "vsx_register_operand" ""))]
+   "!BYTES_BIG_ENDIAN && TARGET_VSX && !TARGET_P9_VECTOR && !reload_completed"
+   [(set (match_dup 2)
+@@ -626,7 +626,7 @@
+ ;; The post-reload split requires that we re-permute the source
+ ;; register in case it is still live.
+ (define_split
+-  [(set (match_operand:V8HI 0 "memory_operand" "")
++  [(set (match_operand:V8HI 0 "indexed_or_indirect_operand" "")
+         (match_operand:V8HI 1 "vsx_register_operand" ""))]
+   "!BYTES_BIG_ENDIAN && TARGET_VSX && !TARGET_P9_VECTOR && reload_completed"
+   [(set (match_dup 1)
+@@ -653,7 +653,7 @@
+   "")
+ 
+ (define_insn "*vsx_le_perm_store_v16qi"
+-  [(set (match_operand:V16QI 0 "memory_operand" "=Z")
++  [(set (match_operand:V16QI 0 "indexed_or_indirect_operand" "=Z")
+         (match_operand:V16QI 1 "vsx_register_operand" "+wa"))]
+   "!BYTES_BIG_ENDIAN && TARGET_VSX && !TARGET_P9_VECTOR"
+   "#"
+@@ -661,7 +661,7 @@
+    (set_attr "length" "12")])
+ 
+ (define_split
+-  [(set (match_operand:V16QI 0 "memory_operand" "")
++  [(set (match_operand:V16QI 0 "indexed_or_indirect_operand" "")
+         (match_operand:V16QI 1 "vsx_register_operand" ""))]
+   "!BYTES_BIG_ENDIAN && TARGET_VSX && !TARGET_P9_VECTOR && !reload_completed"
+   [(set (match_dup 2)
+@@ -694,7 +694,7 @@
+ ;; The post-reload split requires that we re-permute the source
+ ;; register in case it is still live.
+ (define_split
+-  [(set (match_operand:V16QI 0 "memory_operand" "")
++  [(set (match_operand:V16QI 0 "indexed_or_indirect_operand" "")
+         (match_operand:V16QI 1 "vsx_register_operand" ""))]
+   "!BYTES_BIG_ENDIAN && TARGET_VSX && !TARGET_P9_VECTOR && reload_completed"
+   [(set (match_dup 1)
+Index: gcc/config/rs6000/rs6000.md
+===================================================================
+--- a/src/gcc/config/rs6000/rs6000.md	(.../tags/gcc_7_3_0_release)
++++ b/src/gcc/config/rs6000/rs6000.md	(.../branches/gcc-7-branch)
+@@ -4757,12 +4757,19 @@
+ {
+   if (FLOAT128_IEEE_P (<MODE>mode))
+     {
++      rtx dest = operands[0];
++      rtx src = operands[1];
++      rtx tmp = gen_reg_rtx (DImode);
++      rtx dest_di = gen_lowpart (DImode, dest);
++
+       if (<MODE>mode == KFmode)
+-	emit_insn (gen_signbitkf2_dm (operands[0], operands[1]));
++	emit_insn (gen_signbitkf2_dm (tmp, src));
+       else if (<MODE>mode == TFmode)
+-	emit_insn (gen_signbittf2_dm (operands[0], operands[1]));
++	emit_insn (gen_signbittf2_dm (tmp, src));
+       else
+ 	gcc_unreachable ();
++
++      emit_insn (gen_lshrdi3 (dest_di, tmp, GEN_INT (63)));
+       DONE;
+     }
+   operands[2] = gen_reg_rtx (DFmode);
+@@ -4783,6 +4790,66 @@
+     }
+ })
+ 
++;; Optimize IEEE 128-bit signbit on 64-bit systems with direct move to avoid
++;; multiple direct moves.  If we used a SUBREG:DI of the Floa128 type, the
++;; register allocator would typically move the entire _Float128 item to GPRs (2
++;; instructions on ISA 3.0, 3-4 instructions on ISA 2.07).
++;;
++;; After register allocation, if the _Float128 had originally been in GPRs, the
++;; split allows the post reload phases to eliminate the move, and do the shift
++;; directly with the register that contains the signbit.
++(define_insn_and_split "signbit<mode>2_dm"
++  [(set (match_operand:DI 0 "gpc_reg_operand" "=r,r")
++	(unspec:DI [(match_operand:SIGNBIT 1 "gpc_reg_operand" "wa,r")]
++		   UNSPEC_SIGNBIT))]
++  "TARGET_POWERPC64 && TARGET_DIRECT_MOVE"
++  "@
++   mfvsrd %0,%x1
++   #"
++  "&& reload_completed && int_reg_operand (operands[1], <MODE>mode)"
++  [(set (match_dup 0)
++	(match_dup 2))]
++{
++  operands[2] = gen_highpart (DImode, operands[1]);
++}
++ [(set_attr "type" "mftgpr,*")])
++
++;; Optimize IEEE 128-bit signbit on to avoid loading the value into a vector
++;; register and then doing a direct move if the value comes from memory.  On
++;; little endian, we have to load the 2nd double-word to get the sign bit.
++(define_insn_and_split "*signbit<mode>2_dm_mem"
++  [(set (match_operand:DI 0 "gpc_reg_operand" "=b")
++	(unspec:DI [(match_operand:SIGNBIT 1 "memory_operand" "m")]
++		   UNSPEC_SIGNBIT))]
++  "TARGET_POWERPC64 && TARGET_DIRECT_MOVE"
++  "#"
++  "&& 1"
++  [(set (match_dup 0)
++	(match_dup 2))]
++{
++  rtx dest = operands[0];
++  rtx src = operands[1];
++  rtx addr = XEXP (src, 0);
++
++  if (WORDS_BIG_ENDIAN)
++    operands[2] = adjust_address (src, DImode, 0);
++
++  else if (REG_P (addr) || SUBREG_P (addr))
++    operands[2] = adjust_address (src, DImode, 8);
++
++  else if (GET_CODE (addr) == PLUS && REG_P (XEXP (addr, 0))
++	   && CONST_INT_P (XEXP (addr, 1)) && mem_operand_gpr (src, DImode))
++    operands[2] = adjust_address (src, DImode, 8);
++
++  else
++    {
++      rtx tmp = can_create_pseudo_p () ? gen_reg_rtx (DImode) : dest;
++      emit_insn (gen_rtx_SET (tmp, addr));
++      operands[2] = change_address (src, DImode,
++				    gen_rtx_PLUS (DImode, tmp, GEN_INT (8)));
++    }
++})
++
+ (define_expand "copysign<mode>3"
+   [(set (match_dup 3)
+         (abs:SFDF (match_operand:SFDF 1 "gpc_reg_operand" "")))
+@@ -4812,54 +4879,6 @@
+    operands[5] = CONST0_RTX (<MODE>mode);
+   })
+ 
+-;; Optimize signbit on 64-bit systems with direct move to avoid doing the store
+-;; and load.
+-(define_insn_and_split "signbit<mode>2_dm"
+-  [(set (match_operand:SI 0 "gpc_reg_operand" "=r,r,r")
+-	(unspec:SI
+-	 [(match_operand:SIGNBIT 1 "input_operand" "wa,m,r")]
+-	 UNSPEC_SIGNBIT))]
+-  "TARGET_POWERPC64 && TARGET_DIRECT_MOVE"
+-  "#"
+-  "&& reload_completed"
+-  [(const_int 0)]
+-{
+-  rs6000_split_signbit (operands[0], operands[1]);
+-  DONE;
+-}
+- [(set_attr "length" "8,8,4")
+-  (set_attr "type" "mftgpr,load,integer")])
+-
+-(define_insn_and_split "*signbit<mode>2_dm_<su>ext"
+-  [(set (match_operand:DI 0 "gpc_reg_operand" "=r,r,r")
+-	(any_extend:DI
+-	 (unspec:SI
+-	  [(match_operand:SIGNBIT 1 "input_operand" "wa,m,r")]
+-	  UNSPEC_SIGNBIT)))]
+-  "TARGET_POWERPC64 && TARGET_DIRECT_MOVE"
+-  "#"
+-  "&& reload_completed"
+-  [(const_int 0)]
+-{
+-  rs6000_split_signbit (operands[0], operands[1]);
+-  DONE;
+-}
+- [(set_attr "length" "8,8,4")
+-  (set_attr "type" "mftgpr,load,integer")])
+-
+-;; MODES_TIEABLE_P doesn't allow DImode to be tied with the various floating
+-;; point types, which makes normal SUBREG's problematical. Instead use a
+-;; special pattern to avoid using a normal movdi.
+-(define_insn "signbit<mode>2_dm2"
+-  [(set (match_operand:DI 0 "gpc_reg_operand" "=r")
+-	(unspec:DI [(match_operand:SIGNBIT 1 "gpc_reg_operand" "wa")
+-		    (const_int 0)]
+-		   UNSPEC_SIGNBIT))]
+-  "TARGET_POWERPC64 && TARGET_DIRECT_MOVE"
+-  "mfvsrd %0,%x1"
+- [(set_attr "type" "mftgpr")])
+-
+-
+ ;; Use an unspec rather providing an if-then-else in RTL, to prevent the
+ ;; compiler from optimizing -0.0
+ (define_insn "copysign<mode>3_fcpsgn"
+Index: gcc/config/rs6000/driver-rs6000.c
+===================================================================
+--- a/src/gcc/config/rs6000/driver-rs6000.c	(.../tags/gcc_7_3_0_release)
++++ b/src/gcc/config/rs6000/driver-rs6000.c	(.../branches/gcc-7-branch)
+@@ -21,6 +21,8 @@
+ #include "system.h"
+ #include "coretypes.h"
+ #include "tm.h"
++#include "diagnostic.h"
++#include "opts.h"
+ #include <stdlib.h>
+ 
+ #ifdef _AIX
+@@ -36,6 +38,44 @@
+ # include <sys/sysctl.h>
+ #endif
+ 
++#ifdef __linux__
++/* Canonical GCC cpu name table.  */
++static const char *rs6000_supported_cpu_names[] =
++{
++#define RS6000_CPU(NAME, CPU, FLAGS) NAME,
++#include "rs6000-cpus.def"
++#undef RS6000_CPU
++};
++
++/* This table holds a list of cpus where their Linux AT_PLATFORM name differs
++   from their GCC canonical name.  The first column in a row contains the GCC
++   canonical cpu name and the other columns in that row contain AT_PLATFORM
++   names that should be mapped to the canonical name.  */
++
++static const char *linux_cpu_translation_table[][4] = {
++  { "403", "ppc403", NULL },
++  { "405", "ppc405", NULL },
++  { "440", "ppc440", "ppc440gp", NULL },
++  { "476", "ppc470", NULL },
++  { "601", "ppc601", NULL },
++  { "603", "ppc603", NULL },
++  { "604", "ppc604", NULL },
++  { "7400", "ppc7400", NULL },
++  { "7450", "ppc7450", NULL },
++  { "750", "ppc750", NULL },
++  { "823", "ppc823", NULL },
++  { "8540", "ppc8540", NULL },
++  { "8548", "ppc8548", NULL },
++  { "970", "ppc970", NULL },
++  { "cell", "ppc-cell-be", NULL },
++  { "e500mc", "ppce500mc", NULL },
++  { "e5500", "ppce5500", NULL },
++  { "e6500", "ppce6500", NULL },
++  { "power7", "power7+", NULL },
++  { NULL } /* End of table sentinel.  */
++};
++#endif
++
+ const char *host_detect_local_cpu (int argc, const char **argv);
+ 
+ #if GCC_VERSION >= 0
+@@ -156,15 +196,20 @@
+ 
+ #ifdef __linux__
+ 
+-/* Returns AT_PLATFORM if present, otherwise generic PowerPC.  */
++/* Returns the canonical AT_PLATFORM if present, otherwise NULL.  */
+ 
+ static const char *
+ elf_platform (void)
+ {
+-  int fd;
++  /* Used to cache the result we determine below.  */
++  static const char *cpu = NULL;
+ 
+-  fd = open ("/proc/self/auxv", O_RDONLY);
++  /* Use the cached AT_PLATFORM cpu name if we've already determined it.  */
++  if (cpu != NULL)
++    return cpu;
+ 
++  int fd = open ("/proc/self/auxv", O_RDONLY);
++
+   if (fd != -1)
+     {
+       char buf[1024];
+@@ -177,15 +222,51 @@
+       if (n > 0)
+ 	{
+ 	  for (av = (ElfW(auxv_t) *) buf; av->a_type != AT_NULL; ++av)
+-	    switch (av->a_type)
++	    if (av->a_type == AT_PLATFORM)
+ 	      {
+-	      case AT_PLATFORM:
+-		return (const char *) av->a_un.a_val;
+-
+-	      default:
++		/* Cache the result.  */
++		cpu = (const char *) av->a_un.a_val;
+ 		break;
+ 	      }
+ 	}
++
++      /* Verify that CPU is either a valid -mcpu=<cpu> option name, or is a
++	 valid alternative name.  If it is a valid alternative name, then use
++	 the canonical name.  */
++      if (cpu != NULL)
++	{
++	  size_t i, j;
++	  char *s;
++
++	  /* Check if AT_PLATFORM is a GCC canonical cpu name.  */
++	  for (i = 0; i < ARRAY_SIZE (rs6000_supported_cpu_names); i++)
++	    if (!strcmp (cpu, rs6000_supported_cpu_names[i]))
++	      return cpu;
++
++	  /* Check if AT_PLATFORM can be translated to a canonical cpu name.  */
++	  for (i = 0; linux_cpu_translation_table[i][0] != NULL; i++)
++	    {
++	      const char *canonical = linux_cpu_translation_table[i][0];
++	      for (j = 1; linux_cpu_translation_table[i][j] != NULL; j++)
++		if (!strcmp (cpu, linux_cpu_translation_table[i][j]))
++		  {
++		    /* Cache the result.  */
++		    cpu = canonical;
++		    return cpu;
++		  }
++	    }
++
++	  /* The kernel returned an AT_PLATFORM name we do not support.  */
++	  auto_vec <const char *> candidates;
++	  for (i = 0; i < ARRAY_SIZE (rs6000_supported_cpu_names); i++)
++	    candidates.safe_push (rs6000_supported_cpu_names[i]);
++	  candidates_list_and_hint (cpu, s, candidates);
++	  fatal_error (
++	    input_location,
++	    "Unsupported cpu name returned from kernel for -mcpu=native: %s\n"
++	    "Please use an explicit cpu name.  Valid cpu names are: %s",
++	    cpu, s);
++	}
+     }
+   return NULL;
+ }
+Index: gcc/dce.c
+===================================================================
+--- a/src/gcc/dce.c	(.../tags/gcc_7_3_0_release)
++++ b/src/gcc/dce.c	(.../branches/gcc-7-branch)
+@@ -131,6 +131,12 @@
+ 	     && REGNO (pic_offset_table_rtx) >= FIRST_PSEUDO_REGISTER)
+       return false;
+ 
++  /* Callee-save restores are needed.  */
++  if (RTX_FRAME_RELATED_P (insn)
++      && crtl->shrink_wrapped_separate
++      && find_reg_note (insn, REG_CFA_RESTORE, NULL))
++    return false;
++
+   body = PATTERN (insn);
+   switch (GET_CODE (body))
+     {
+@@ -589,15 +595,6 @@
+ 	  if (!dbg_cnt (dce))
+ 	    continue;
+ 
+-	  if (crtl->shrink_wrapped_separate
+-	      && find_reg_note (insn, REG_CFA_RESTORE, NULL))
+-	    {
+-	      if (dump_file)
+-		fprintf (dump_file, "DCE: NOT deleting insn %d, it's a "
+-				    "callee-save restore\n", INSN_UID (insn));
+-	      continue;
+-	    }
+-
+ 	  if (dump_file)
+ 	    fprintf (dump_file, "DCE: Deleting insn %d\n", INSN_UID (insn));
+ 
