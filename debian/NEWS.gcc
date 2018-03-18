@@ -1,0 +1,865 @@
+This file contains information about GCC releases which has been generated
+automatically from the online release notes.  It covers releases of GCC
+(and the former EGCS project) since EGCS 1.0, on the line of development
+that led to GCC 3. For information on GCC 2.8.1 and older releases of GCC 2,
+see ONEWS.
+
+======================================================================
+http://gcc.gnu.org/gcc-7/index.html
+
+                              GCC 7 Release Series
+                        Changes, New Features, and Fixes
+
+  This page is a brief summary of some of the huge number of improvements
+  in GCC 7. For more information, see the "Porting to GCC 7" page and the
+  full GCC documentation.
+
+Caveats
+
+    * GCC now uses LRA (a new local register allocator) by default for new
+      targets.
+    * The non-standard C++0x type traits has_trivial_default_constructor,
+      has_trivial_copy_constructor and has_trivial_copy_assign have been
+      removed.
+    * The libstdc++ Profile Mode has been deprecated and will be removed in a
+      future version.
+    * The Cilk+ extensions to the C and C++ languages have been deprecated.
+
+General Optimizer Improvements
+
+    * GCC 7 can determine the return value or range of return values of some
+      calls to the sprintf family of functions and make it available to other
+      optimization passes. Some calls to the snprintf function with a zero size
+      argument can be folded into constants. This optimization is included in
+      -O1 and can be selectively controlled by the -fprintf-return-value option.
+    * A new store merging pass has been added. It merges constant stores to
+      adjacent memory locations into fewer, wider, stores. It is enabled by the
+      -fstore-merging option and at the -O2 optimization level or higher (and
+      -Os).
+    * A new code hoisting optimization has been added to the partial redundancy
+      elimination pass. It attempts to move evaluation of expressions executed
+      on all paths to the function exit as early as possible, which helps
+      primarily for code size, but can be useful for speed of generated code as
+      well. It is enabled by the -fcode-hoisting option and at the -O2
+      optimization level or higher (and -Os).
+    * A new interprocedural bitwise constant propagation optimization has been
+      added, which propagates knowledge about which bits of variables are known
+      to be zero (including pointer alignment information) across the call
+      graph. It is enabled by the -fipa-bit-cp option if -fipa-cp is enabled as
+      well, and is enabled at the -O2 optimization level and higher (and -Os).
+      This optimization supersedes interprocedural alignment propagation of GCC
+      6, and therefore the option -fipa-cp-alignment is now deprecated and
+      ignored.
+    * A new interprocedural value range propagation optimization has been
+      added, which propagates integral ranges that variable values can be
+      proven to be within across the call graph. It is enabled by the -fipa-vrp
+      option and at the -O2 optimization level and higher (and -Os).
+    * A new loop splitting optimization pass has been added. It splits certain
+      loops if they contain a condition that is always true on one side of the
+      iteration space and always false on the other into two loops where each
+      of the new two loops iterates just on one of the sides of the iteration
+      space and the condition does not need to be checked inside of the loop.
+      It is enabled by the -fsplit-loops option and at the -O3 optimization
+      level or higher.
+    * The shrink-wrapping optimization can now separate portions of prologues
+      and epilogues to improve performance if some of the work done
+      traditionally by prologues and epilogues is not needed on certain paths.
+      This is controlled by the -fshrink-wrap-separate option, enabled by
+      default. It requires target support, which is currently only implemented
+      in the PowerPC and AArch64 ports.
+    * AddressSanitizer gained a new sanitization option, -fsanitize-address-
+      use-after-scope, which enables sanitization of variables whose address is
+      taken and used after a scope where the variable is defined:
+ 
+           int
+           main (int argc, char **argv)
+           {
+             char *ptr;
+               {
+                 char my_char;
+                 ptr = &my_char;
+               }
+
+             *ptr = 123;
+             return *ptr;
+           }
+
+           ==28882==ERROR: AddressSanitizer: stack-use-after-scope on address 0x7fffb8dba990 at pc 0x0000004006d5 bp 0x7fffb8dba960 sp 0x7fffb8dba958
+           WRITE of size 1 at 0x7fffb8dba990 thread T0
+               #0 0x4006d4 in main /tmp/use-after-scope-1.c:10
+               #1 0x7f9c71943290 in __libc_start_main (/lib64/libc.so.6+0x20290)
+               #2 0x400739 in _start (/tmp/a.out+0x400739)
+
+           Address 0x7fffb8dba990 is located in stack of thread T0 at offset 32 in frame
+               #0 0x40067f in main /tmp/use-after-scope-1.c:3
+
+             This frame has 1 object(s):
+               [32, 33) 'my_char' <== Memory access at offset 32 is inside this variable
+
+      The option is enabled by default with -fsanitize=address and disabled by
+      default with -fsanitize=kernel-address. Compared to the LLVM compiler,
+      where the option already exists, the implementation in the GCC compiler
+      has couple of improvements and advantages:
+          o A complex usage of gotos and case labels are properly handled and
+            should not report any false positive or false negatives.
+          o C++ temporaries are sanitized.
+          o Sanitization can handle invalid memory stores that are optimized
+            out by the LLVM compiler when using an optimization level.
+    * The -fsanitize=signed-integer-overflow suboption of the UndefinedBehavior
+      Sanitizer now diagnoses arithmetic overflows even on arithmetic
+      operations with generic vectors.
+    * Version 5 of the DWARF debugging information standard is supported
+      through the -gdwarf-5 option. The DWARF version 4 debugging information
+      remains the default until debugging information consumers are adjusted.
+
+New Languages and Language specific improvements
+
+ OpenACC support in C, C++, and Fortran continues to be maintained and
+improved. See the OpenACC and Offloading wiki pages for further information.
+
+Ada
+    * On mainstream native platforms, Ada programs no longer require the stack
+      to be made executable in order to run properly.
+
+BRIG (HSAIL)
+
+Support for processing BRIG 1.0 files was added in this release. BRIG is a
+binary format for HSAIL (Heterogeneous System Architecture Intermediate
+Language). The BRIG frontend can be used for implementing HSAIL "finalizers"
+(compilation of HSAIL to a native ISA) for gcc-supported targets. An
+implementation of an HSAIL runtime library, libhsail-rt is also included.
+
+C family
+
+    * New command-line options have been added for the C and C++ compilers:
+          o -Wimplicit-fallthrough warns when a switch case falls through. This
+            warning has five different levels. The compiler is able to parse a
+            wide range of fallthrough comments, depending on the level. It also
+            handles control-flow statements, such as ifs. It's possible to
+            suppres the warning by either adding a fallthrough comment, or by
+            using a null statement: __attribute__ ((fallthrough)); (C, C++), or
+            [[fallthrough]]; (C++17), or [[gnu::fallthrough]]; (C++11/C++14).
+            This warning is enabled by -Wextra.
+          o -Wpointer-compare warns when a pointer is compared with a zero
+            character constant. Such code is now invalid in C++11 and GCC
+            rejects it. This warning is enabled by default.
+          o -Wduplicated-branches warns when an if-else has identical branches.
+          o -Wrestrict warns when an argument passed to a restrict-qualified
+            parameter aliases with another argument.
+          o -Wmemset-elt-size warns for memset calls, when the first argument
+            references an array, and the third argument is a number equal to
+            the number of elements of the array, but not the size of the array.
+            This warning is enabled by -Wall.
+          o -Wint-in-bool-context warns about suspicious uses of integer values
+            where boolean values are expected. This warning is enabled by -
+            Wall.
+          o -Wswitch-unreachable warns when a switch statement has statements
+            between the controlling expression and the first case label which
+            will never be executed. This warning is enabled by default.
+          o -Wexpansion-to-defined warns when defined is used outside #if. This
+            warning is enabled by -Wextra or -Wpedantic.
+          o -Wregister warns about uses of the register storage specifier. In
+            C++17 this keyword has been removed and for C++17 this is a
+            pedantic warning enabled by default. The warning is not emitted for
+            the GNU Explicit Register Variables extension.
+          o -Wvla-larger-than=N warns about unbounded uses of variable-length
+            arrays, and about bounded uses of variable-length arrays whose
+            bound can be larger than N bytes.
+          o -Wduplicate-decl-specifier warns when a declaration has duplicate
+            const, volatile, restrict or _Atomic specifier. This warning is
+            enabled by -Wall.
+    * GCC 6's C and C++ frontends were able to offer suggestions for misspelled
+      field names:
+           spellcheck-fields.cc:52:13: error: 'struct s' has no member named 'colour'; did you mean 'color'?
+              return ptr->colour;
+                          ^~~~~~
+      GCC 7 greatly expands the scope of these suggestions. Firstly, it adds
+      fix-it hints to such suggestions:
+           spellcheck-fields.cc:52:13: error: 'struct s' has no member named 'colour'; did you mean 'color'?
+              return ptr->colour;
+                          ^~~~~~
+                          color
+      The suggestions now cover many other things, such as misspelled function
+      names:
+           spellcheck-identifiers.c:11:3: warning: implicit declaration of function 'gtk_widget_showall'; did you mean
+           'gtk_widget_show_all'? [-Wimplicit-function-declaration]
+              gtk_widget_showall (w);
+              ^~~~~~~~~~~~~~~~~~
+              gtk_widget_show_all
+      misspelled macro names and enum values:
+           spellcheck-identifiers.cc:85:11: error: 'MAX_ITEM' undeclared here (not in a function); did you mean 'MAX_ITEMS'?
+            int array[MAX_ITEM];
+                      ^~~~~~~~
+                      MAX_ITEMS
+      misspelled type names:
+           spellcheck-typenames.c:7:14: error: unknown type name 'singed'; did you mean 'signed'?
+            void test (singed char e);
+                       ^~~~~~
+                       signed
+      and, in the C frontend, named initializers:
+           test.c:7:20: error: 'struct s' has no member named 'colour'; did you mean 'color'?
+            struct s test = { .colour = 3 };
+                               ^~~~~~
+                               color
+    * The preprocessor can now offer suggestions for misspelled directives,
+      e.g.:
+           test.c:5:2: error:invalid preprocessing directive #endfi; did you mean #endif?
+            #endfi
+             ^~~~~
+             endif
+    * Warnings about format strings now underline the pertinent part of the
+      string, and can offer suggested fixes. In some cases, the pertinent
+      argument is underlined.
+           test.c:51:29: warning: format '%s' expects argument of type 'char *', but argument 3 has type 'int' [-Wformat=]
+              printf ("foo: %d  bar: %s baz: %d", 100, i + j, 102);
+                                     ~^                ~~~~~
+                                     %d
+    * The new -Wdangling-else command-line option has been split out of
+      -Wparentheses and warns about dangling else.
+    * The -Wshadow warning has been split into three variants. -Wshadow=global
+      warns for any shadowing. This is the default when using -Wshadow without
+      any argument. -Wshadow=local only warns for a local variable shadowing
+      another local variable or parameter. -Wshadow=compatible-local only warns
+      for a local variable shadowing another local variable or parameter whose
+      type is compatible (in C++ compatible means that the type of the
+      shadowing variable can be converted to that of the shadowed variable).
+      The following example shows the different kinds of shadow warnings:
+
+           enum operation { add, count };
+           struct container { int nr; };
+
+           int
+           container_count (struct container c, int count)
+           {
+             int r = 0;
+             for (int count = 0; count > 0; count--)
+               {
+                 struct container count = c;
+                 r += count.nr;
+               }
+             return r;
+           }
+
+      -Wshadow=compatible-local will warn for the parameter being shadowed with
+      the same type:
+           warn-test.c:8:12: warning: declaration of 'count' shadows a parameter [-Wshadow=compatible-local]
+              for (int count = 0; count > 0; count--)
+                       ^~~~~
+           warn-test.c:5:42: note: shadowed declaration is here
+            container_count (struct container c, int count)
+                                                     ^~~~~
+      -Wshadow=local will warn for the above and for the shadowed declaration
+      with incompatible type:
+           warn-test.c:10:24: warning: declaration of 'count' shadows a previous local [-Wshadow=local]
+                  struct container count = c;
+                                   ^~~~~
+           warn-test.c:8:12: note: shadowed declaration is here
+              for (int count = 0; count > 0; count--)
+                       ^~~~~
+      -Wshadow=global will warn for all of the above and the shadowing of the
+      global declaration:
+           warn-test.c:5:42: warning: declaration of 'count' shadows a global declaration [-Wshadow]
+            container_count (struct container c, int count)
+                                                     ^~~~~
+           warn-test.c:1:23: note: shadowed declaration is here
+            enum operation { add, count };
+                                  ^~~~~
+    * GCC 7 contains a number of enhancements that help detect buffer overflow
+      and other forms of invalid memory accesses.
+          o The -Walloc-size-larger-than=size option detects calls to standard
+            and user-defined memory allocation functions decorated with
+            attribute alloc_size whose argument exceeds the specified size
+            (PTRDIFF_MAX by default). The option also detects arithmetic
+            overflow in the computation of the size in two-argument allocation
+            functions like calloc where the total size is the product of the
+            two arguments. Since calls with an excessive size cannot succeed
+            they are typically the result of programming errors. Such bugs have
+            been known to be the source of security vulnerabilities and a
+            target of exploits. -Walloc-size-larger-than=PTRDIFF_MAX is
+            included in -Wall.
+            For example, the following call to malloc incorrectly tries to
+            avoid passing a negative argument to the function and instead ends
+            up unconditionally invoking it with an argument less than or equal
+            to zero. Since after conversion to the type of the argument of the
+            function (size_t) a negative argument results in a value in excess
+            of the maximum PTRDIFF_MAX the call is diagnosed.
+
+                 void* f (int n)
+                 {
+                   return malloc (n > 0 ? 0 : n);
+                 }
+
+                 warning: argument 1 range [2147483648, 4294967295] exceeds maximum object size 2147483647 [-Walloc-size-larger-than=]
+
+          o The -Walloc-zero option detects calls to standard and user-defined
+            memory allocation functions decorated with attribute alloc_size
+            with a zero argument. -Walloc-zero is not included in either -Wall
+            or -Wextra and must be explicitly enabled.
+          o The -Walloca option detects all calls to the alloca function in the
+            program. -Walloca is not included in either -Wall or -Wextra and
+            must be explicitly enabled.
+          o The -Walloca-larger-than=size option detects calls to the alloca
+            function whose argument either may exceed the specified size, or
+            that is not known to be sufficiently constrained to avoid exceeding
+            it. -Walloca-larger-than is not included in either -Wall or -Wextra
+            and must be explicitly enabled.
+            For example, compiling the following snippet with -Walloca-larger-
+            than=1024 results in a warning because even though the code appears
+            to call alloca only with sizes of 1kb and less, since n is signed,
+            a negative value would result in a call to the function well in
+            excess of the limit.
+
+                 void f (int n)
+                 {
+                   char *d;
+                   if (n < 1025)
+                     d = alloca (n);
+                   else
+                     d = malloc (n);
+                   …
+                 }
+
+                 warning: argument to 'alloca may be too large due to  conversion from 'int' to 'long unsigned int' [-Walloca-larger-than=]
+
+            In contrast, a call to alloca that isn't bounded at all such as in
+            the following function will elicit the warning below regardless of
+            the size argument to the option.
+
+                 void f (size_t n)
+                 {
+                   char *d = alloca (n);
+                   ...
+                 }
+
+                 warning: unbounded use of 'alloca' [-Walloca-larger-than=]
+
+          o The -Wformat-overflow=level option detects certain and likely
+            buffer overflow in calls to the sprintf family of formatted output
+            functions. Although the option is enabled even without optimization
+            it works best with -O2 and higher.
+            For example, in the following snippet the call to sprintf is
+            diagnosed because even though its output has been constrained using
+            the modulo operation it could result in as many as three bytes if
+            mday were negative. The solution is to either allocate a larger
+            buffer or make sure the argument is not negative, for example by
+            changing mday's type to unsigned or by making the type of the
+            second operand of the modulo expression unsigned: 100U.
+
+                 void* f (int mday)
+                 {
+                   char *buf = malloc (3);
+                   sprintf (buf, "%02i", mday % 100);
+                   return buf;
+                 }
+
+                 warning: 'sprintf may write a terminating nul past the end of the destination [-Wformat-overflow=]
+                 note: 'sprintf' output between 3 and 4 bytes into a destination of size 3
+
+          o The -Wformat-truncation=level option detects certain and likely
+            output truncation in calls to the snprintf family of formatted
+            output functions. -Wformat-truncation=1 is included in -Wall and
+            enabled without optimization but works best with -O2 and higher.
+            For example, the following function attempts to format an integer
+            between 0 and 255 in hexadecimal, including the 0x prefix, into a
+            buffer of four charactars. But since the function must always
+            terminate output by the null character ('\0') such a buffer is only
+            big enough to fit just one digit plus the prefix. Therefore the
+            snprintf call is diagnosed. To avoid the warning either use a
+            bigger buffer or handle the function's return value which indicates
+            whether or not its output has been truncated.
+
+                 void f (unsigned x)
+                 {
+                   char d[4];
+                   snprintf (d, sizeof d, "%#02x", x & 0xff);
+                   …
+                 }
+
+                 warning: 'snprintf' output may be truncated before the last format character [-Wformat-truncation=]
+                 note: 'snprintf' output between 3 and 5 bytes into a destination of size 4
+
+          o The -Wnonnull option has been enhanced to detect a broader set of
+            cases of passing null pointers to functions that expect a non-null
+            argument (those decorated with attribute nonnull). By taking
+            advantage of optimizations the option can detect many more cases of
+            the problem than in prior GCC versions.
+          o The -Wstringop-overflow=type option detects buffer overflow in
+            calls to string handling functions like memcpy and strcpy. The
+            option relies on Object_Size_Checking and has an effect similar to
+            defining the _FORTIFY_SOURCE macro. -Wstringop-overflow=2 is
+            enabled by default.
+            For example, in the following snippet, because the call to strncat
+            specifies a maximum that allows the function to write past the end
+            of the destination, it is diagnosed. To correct the problem and
+            avoid the overflow the function should be called with a size of at
+            most sizeof d - strlen(d) - 1.
+
+                 void f (const char *fname)
+                 {
+                   char d[8];
+                   strncpy (d, "/tmp/", sizeof d);
+                   strncat (d, fname, sizeof d);
+                   ...
+                 }
+
+                 warning: specified bound 8 equals the size of the destination [-Wstringop-overflow=]
+
+    * The <limits.h> header provided by GCC defines macros such as INT_WIDTH
+      for the width in bits of integer types, if
+      __STDC_WANT_IEC_60559_BFP_EXT__ is defined before the header is included.
+      The <stdint.h> header defines such macros as SIZE_WIDTH and INTMAX_WIDTH
+      for the width of some standard typedef names for integer types, again if
+      __STDC_WANT_IEC_60559_BFP_EXT__ is defined before the header is included;
+      note that GCC's implementation of this header is only used for
+      freestanding compilations, not hosted compilations, on most systems.
+      These macros come from ISO/IEC TS 18661-1:2014.
+    * The <float.h> header provided by GCC defines the macro CR_DECIMAL_DIG,
+      from ISO/IEC TS 18661-1:2014, if __STDC_WANT_IEC_60559_BFP_EXT__ is
+      defined before the header is included. This represents the number of
+      decimal digits for which conversions between decimal character strings
+      and binary formats, in both directions, are correctly rounded, and
+      currently has the value of UINTMAX_MAX on all systems, reflecting that
+      GCC's compile-time conversions are correctly rounded for any number of
+      digits.
+    * New __builtin_add_overflow_p, __builtin_sub_overflow_p,
+      __builtin_mul_overflow_p built-in functions have been added. These work
+      similarly to their siblings without the _p suffix, but do not actually
+      store the result of the arithmetics anywhere, just return whether the
+      operation would overflow. Calls to these built-ins with integer constant
+      arguments evaluate to integer constants expressions.
+      For example, in the following, c is assigned the result of a * b only if
+      the multiplication does not overflow, otherwise it is assigned the value
+      zero. The multiplication is performed at compile-time and without
+      triggering a -Woverflow warning.
+
+           enum {
+             a = 12345678,
+             b = 87654321,
+             c = __builtin_mul_overflow_p (a, b, a) ? 0 : a * b
+           };
+
+C
+
+    * The C front end now supports type names _FloatN for floating-point types
+      with IEEE interchange formats and _FloatNx for floating-point types with
+      IEEE extended formats. These type names come from ISO/IEC TS 18661-3:
+      2015.
+      The set of types supported depends on the target for which GCC is
+      configured. Most targets support _Float32, _Float32x and _Float64.
+      _Float128 is supported on targets where IEEE binary128 encoding was
+      already supported as long double or __float128. _Float64x is supported on
+      targets where a type with either binary128 or Intel extended precision
+      format is available.
+      Constants with these types are supported using suffixes fN, FN, fNx and
+      FNx (e.g., 1.2f128 or 2.3F64x). Macros such as FLT128_MAX are defined in
+      <float.h> if __STDC_WANT_IEC_60559_TYPES_EXT__ is defined before it is
+      included.
+      These new types are always distinct from each other and from float,
+      double and long double, even if they have the same encoding. Complex
+      types such as _Complex _Float128 are also supported.
+      Type-generic built-in functions such as __builtin_isinf support the new
+      types, and the following type-specific built-in functions have versions
+      (suffixed fN or fNx) for the new types: __builtin_copysign,
+      __builtin_fabs, __builtin_huge_val, __builtin_inf, __builtin_nan,
+      __builtin_nans.
+    * Compilation with -fopenmp is now compatible with the C11 _Atomic keyword.
+
+C++
+
+    * The C++ front end has experimental support for all of the current C++17
+      draft with the -std=c++1z or -std=gnu++1z flags, including if constexpr,
+      class template argument deduction, auto template parameters, and
+      structured bindings. For a full list of new features, see the_C++_status
+      page.
+    * C++17 support for new of over-aligned types can be enabled in other modes
+      with the -faligned-new flag.
+    * The C++17 evaluation order requirements can be selected in other modes
+      with the -fstrong-eval-order flag, or disabled in C++17 mode with -fno-
+      strong-eval-order.
+    * The default semantics of inherited constructors has changed in all modes,
+      following P0136. Essentially, overload resolution happens as if calling
+      the inherited constructor directly, and the compiler fills in
+      construction of the other bases and members as needed. Most uses should
+      not need any changes. The old behavior can be restored with -fno-new-
+      inheriting-ctors, or -fabi-version less than 11.
+    * The resolution of DR 150 on matching of template template parameters,
+      allowing default template arguments to make a template match a parameter,
+      is currently enabled by default in C++17 mode only. The default can be
+      overridden with -f{no-,}new-ttp-matching.
+    * The C++ front end will now provide fix-it hints for some missing
+      semicolons, allowing for automatic fixes by IDEs:
+
+           test.cc:4:11: error: expected ';' after class definition
+            class a {}
+                      ^
+                      ;
+    * -Waligned-new has been added to the C++ front end. It warns about new of
+      type with extended alignment without -faligned-new.
+
+Runtime Library (libstdc++)
+
+    * The type of exception thrown by iostreams, std::ios_base::failure, now
+      uses the cxx11_ABI.
+    * Experimental support for C++17, including the following new features:
+          o std::string_view;
+          o std::any, std::optional, and std::variant;
+          o std::invoke, std::is_invocable, std::is_nothrow_invocable, and
+            invoke_result;
+          o std::is_swappable, and std::is_nothrow_swappable;
+          o std::apply, and std::make_from_tuple;
+          o std::void_t, std::bool_constant, std::conjunction, std::
+            disjunction, and std::negation;
+          o Variable templates for type traits;
+          o Mathematical Special Functions;
+          o std::chrono::floor, std::chrono::ceil, std::chrono::round, and
+            std::chrono::abs;
+          o std::clamp, std::gcd, std::lcm, 3-dimensional std::hypot;
+          o std::scoped_lock, std::shared_mutex, std::atomic<T>::
+            is_always_lock_free;
+          o std::sample, std::default_searcher, std::boyer_moore_searcher and
+            std::boyer_moore_horspool_searcher;
+          o Extraction and re-insertion of map and set nodes, try_emplace
+            members for maps, and functions for accessing containers std::size,
+            std::empty, and std::data;
+          o std::shared_ptr support for arrays, std::shared_ptr<T>::weak_type,
+            std::enable_shared_from_this<T>::weak_from_this(), and std::
+            owner_less<void>;
+          o std::byte;
+          o std::as_const, std::not_fn, std::has_unique_object_representations,
+            constexpr std::addressof.
+      Thanks to Daniel Krügler, Tim Shen, Edward Smith-Rowland, and Ville
+      Voutilainen for work on the C++17 support.
+    * A new power-of-two rehashing policy for use with the _Hashtable
+      internals, thanks to François Dumont.
+
+Fortran
+
+    * Support for a number of extensions for compatibility with legacy code
+      with new flags:
+          o -fdec-structure Support for DEC STRUCTURE and UNION
+          o -fdec-intrinsic-ints Support for new integer intrinsics with B/I/J/
+            K prefixes such as BABS, JIAND...
+          o -fdec-math Support for additional math intrinsics, including COTAN
+            and degree-valued trigonometric functions such as TAND, ASIND...
+          o -fdec Enable the -fdec-* family of extensions.
+    * New flag -finit-derived to allow default initialization of derived-type
+      variables.
+    * Improved DO loops with step equal to 1 or -1, generates faster code
+      without a loop preheader. A new warning, -Wundefined-do-loop, warns when
+      a loop iterates either to HUGE(i) (with step equal to 1), or to -HUGE(i)
+      (with step equal to -1). Invalid behavior can be caught at run time with
+      -fcheck=do enabled:
+
+           program test
+             implicit none
+             integer(1) :: i
+             do i = -HUGE(i)+10, -HUGE(i)-1, -1
+               print *, i
+             end do
+           end program test
+
+           At line 8 of file do_check_12.f90
+           Fortran runtime error: Loop iterates infinitely
+
+    * Version 4.5 of the OpenMP_specification is now partially supported also
+      in the Fortran compiler; the largest missing item is structure element
+      mapping.
+    * User-defined derived-type input/output (UDTIO) is added.
+    * Derived type coarrays with allocable and pointer components is partially
+      supported.
+    * Non-constant stop codes and error stop codes (Fortran 2015 feature).
+    * Derived types with allocatable components of recursive type.
+    * Intrinsic assignment to polymorphic variables.
+    * Improved submodule support.
+    * Improved diagnostics (polymorphic results in pure functions).
+
+Go
+
+    * GCC 7 provides a complete implementation of the Go 1.8.1 user packages.
+    * Compared to the Go 1.8.1 toolchain, the garbage collector is more
+      conservative and less concurrent.
+    * Escape analysis is available for experimental use via the -fgo-optimize-
+      allocs option. The -fgo-debug-escape prints information useful for
+      debugging escape analysis choices.
+
+Java (GCJ)
+
+The GCC Java frontend and associated libjava runtime library have been removed
+from GCC.
+
+libgccjit
+
+The libgccjit API gained support for marking calls as requiring tail-call
+optimization via a new entrypoint: gcc_jit_rvalue_set_bool_require_tail_call.
+libgccjit performs numerous checks at the API boundary, but if these succeed,
+it previously ignored errors and other diagnostics emitted within the core of
+GCC, and treated the compile of a gcc_jit_context as having succeeded. As of
+GCC 7 it now ensures that if any diagnostics are emitted, they are visible from
+the libgccjit API, and that the the context is flagged as having failed.
+
+New Targets and Target Specific Improvements
+
+AArch64
+
+    * The ARMv8.3-A architecture is now supported. It can be used by specifying
+      the -march=armv8.3-a option.
+    * The option -msign-return-address= is supported to enable return address
+      protection using ARMv8.3-A Pointer Authentication Extensions. For more
+      information on the arguments accepted by this option, please refer to
+      AArch64-Options.
+    * The ARMv8.2-A architecture and the ARMv8.2-A 16-bit Floating-Point
+      Extensions are now supported. They can be used by specifying the -
+      march=armv8.2-a or -march=armv8.2-a+fp16 options. The 16-bit Floating-
+      Point Extensions introduce new half-precision data processing floating-
+      point instructions.
+    * Support has been added for the following processors (GCC identifiers in
+      parentheses): ARM Cortex-A73 (cortex-a73), Broadcom Vulcan (vulcan),
+      Cavium ThunderX CN81xx (thunderxt81), Cavium ThunderX CN83xx
+      (thunderxt83), Cavium ThunderX CN88xx (thunderxt88), Cavium ThunderX
+      CN88xx pass 1.x (thunderxt88p1), Cavium ThunderX 2 CN99xx (thunderx2t99),
+      Qualcomm Falkor (falkor). The GCC identifiers can be used as arguments to
+      the -mcpu or -mtune options, for example: -mcpu=cortex-a73 or -
+      mtune=vulcan or as arguments to the equivalent target attributes and
+      pragmas.
+
+ARC
+
+    * Add support for ARC HS and ARC EM processors.
+    * Add support for ARC EM variation found in Intel QuarkSE SoCs.
+    * Add support for NPS400 ARC700 based CPUs.
+    * Thread Local Storage is now supported by ARC CPUs.
+    * Fix errors for ARC600 when using 32x16 multiplier option.
+    * Fix PIE for ARC CPUs.
+    * New CPU templates are supported via multilib.
+
+ARM
+
+    * Support for the ARMv5 and ARMv5E architectures has been deprecated (which
+      have no known implementations) and will be removed in a future GCC
+      release. Note that ARMv5T, ARMv5TE and ARMv5TEJ architectures remain
+      supported. The values armv5 and armv5e of -march are thus deprecated.
+    * The ARMv8.2-A architecture and the ARMv8.2-A 16-bit Floating-Point
+      Extensions are now supported. They can be used by specifying the -
+      march=armv8.2-a or -march=armv8.2-a+fp16 options. The 16-bit Floating-
+      Point Extensions introduce new half-precision data processing floating-
+      point instructions.
+    * The ARMv8-M architecture is now supported in its two architecture
+      profiles: ARMv8-M Baseline and ARMv8-M Mainline with its DSP and
+      Floating-Point Extensions. They can be used by specifying the -
+      march=armv8-m.base, armv8-m.main or armv8-m.main+dsp options.
+    * Support has been added for the following processors (GCC identifiers in
+      parentheses): ARM Cortex-A73 (cortex-a73), ARM Cortex-M23 (cortex-m23)
+      and ARM Cortex-M33 (cortex-m33). The GCC identifiers can be used as
+      arguments to the -mcpu or -mtune options, for example: -mcpu=cortex-a73
+      or -mtune=cortex-m33.
+    * A new command-line option -mpure-code has been added. It does not allow
+      constant data to be placed in code sections. This option is only
+      available when generating non-pic code for ARMv7-M targets.
+    * Support for the ACLE Coprocessor Intrinsics has been added. This enables
+      the generation of coprocessor instructions through the use of intrinsics
+      such as cdp, ldc, and others.
+    * The configure option --with-multilib-list now accepts the value rmprofile
+      to build multilib libraries for a range of embedded targets. See our
+      installation_instructions for details.
+
+AVR
+
+    * On the reduced Tiny cores, the progmem variable_attribute is now properly
+      supported. Respective read-only variables are located in flash memory in
+      section .progmem.data. No special code is needed to access such
+      variables; the compiler automatically adds an offset of 0x4000 to all
+      addresses, which is needed to access variables in flash memory. As
+      opposed to ordinary cores where it is sufficient to specify the progmem
+      attribute with definitions, on the reduced Tiny cores the attribute also
+      has to be specified with (external) declarations:
+
+           extern const int array[] __attribute__((__progmem__));
+
+           int get_value2 (void)
+           {
+             /* Access via addresses array + 0x4004 and array + 0x4005. */
+             return array[2];
+           }
+
+           const int* get_address (unsigned idx)
+           {
+             /* Returns array + 0x4000 + 2 * idx. */
+             return &array[idx];
+           }
+
+    * A new command-line option -Wmisspelled-isr has been added. It turns off —
+      or turns into errors — warnings that are reported for interrupt service
+      routines (ISRs) which don't follow AVR-LibC's naming convention of
+      prefixing ISR names with __vector.
+    * __builtin_avr_nops(n) is a new built-in_function that inserts n NOP
+      instructions into the instruction stream. n must be a value known at
+      compile time.
+
+IA-32/x86-64
+
+    * Support for the AVX-512 Fused Multiply Accumulation Packed Single
+      precision (4FMAPS), AVX-512 Vector Neural Network Instructions Word
+      variable precision (4VNNIW), AVX-512 Vector Population Count (VPOPCNTDQ)
+      and Software Guard Extensions (SGX) ISA extensions has been added.
+
+NVPTX
+
+    * OpenMP target regions can now be offloaded to NVidia PTX GPGPUs. See the
+      Offloading_Wiki on how to configure it.
+
+PowerPC / PowerPC64 / RS6000
+
+    * The PowerPC port now uses LRA by default.
+    * GCC now diagnoses inline assembly that clobbers register r2. This has
+      always been invalid code, and is no longer quietly tolerated.
+    * The PowerPC port's support for ISA 3.0 (-mcpu=power9) has been enhanced
+      to generate more of the new instructions by default, and to provide more
+      built-in functions to generate code for other new instructions.
+    * The configuration option --enable-gnu-indirect-function is now enabled by
+      default on PowerPC GNU/Linux builds.
+    * The PowerPC port will now allow 64-bit and 32-bit integer types to be
+      allocated to the VSX vector registers (ISA 2.06 and above). In addition,
+      on ISA 3.0, 16-bit and 8-bit integer types can be allocated in the vector
+      registers. Previously, only 64-bit integer types were allowed in the
+      traditional floating point registers.
+    * New options -mstack-protector-guard=global, -mstack-protector-guard=tls,
+      -mstack-protector-guard-reg=, and -mstack-protector-guard-offset= change
+      how the stack protector gets the value to use as canary.
+
+RISC-V
+
+    * Support for the RISC-V instruction set has been added.
+
+SPARC
+
+    * The SPARC port now uses LRA by default.
+    * Support for the new Subtract-Extended-with-Carry instruction available in
+      SPARC M7 (Niagara 7) has been added.
+
+Operating Systems
+
+AIX
+
+    * Visibility support has been enabled for AIX 7.1 and above.
+
+Fuchsia
+
+    * Support has been added for the Fuchsia_OS.
+
+RTEMS
+
+    * The ABI changes on ARM so that no short enums are used by default.
+
+Other significant improvements
+
+    * -fverbose-asm previously emitted information on the meanings of assembly
+      expressions. This has been extended so that it now also prints comments
+      showing the source lines that correspond to the assembly, making it
+      easier to read the generated assembly (especially with larger functions).
+      For example, given this C source file:
+
+           int test (int n)
+           {
+             int i;
+             int total = 0;
+
+             for (i = 0; i < n; i++)
+               total += i * i;
+             return total;
+           }
+
+      -fverbose-asm now gives output similar to this for the function body
+      (when compiling for x86_64, with -Os):
+
+                  .text
+                  .globl  test
+                  .type   test, @@function
+           test:
+           .LFB0:
+                  .cfi_startproc
+           # example.c:4:   int total = 0;
+                  xorl    %eax, %eax      # <retval>
+           # example.c:6:   for (i = 0; i < n; i++)
+                  xorl    %edx, %edx      # i
+           .L2:
+           # example.c:6:   for (i = 0; i < n; i++)
+                  cmpl    %edi, %edx      # n, i
+                  jge     .L5     #,
+           # example.c:7:     total += i * i;
+                  movl    %edx, %ecx      # i, tmp92
+                  imull   %edx, %ecx      # i, tmp92
+           # example.c:6:   for (i = 0; i < n; i++)
+                  incl    %edx    # i
+           # example.c:7:     total += i * i;
+                  addl    %ecx, %eax      # tmp92, <retval>
+                  jmp     .L2     #
+           .L5:
+           # example.c:10: }
+                  ret
+                  .cfi_endproc
+
+    * Two new options have been added for printing fix-it hints:
+          o -fdiagnostics-parseable-fixits allows for fix-it hints to be
+            emitted in a machine-readable form, suitable for consumption by
+            IDEs. For example, given:
+
+                 spellcheck-fields.cc:52:13: error: 'struct s' has no member named 'colour'; did you mean 'color'?
+                    return ptr->colour;
+                                ^~~~~~
+                                color
+            it will emit:
+                 fix-it:"spellcheck-fields.cc":{52:13-52:19}:"color"
+          o -fdiagnostics-generate-patch will print a patch in "unified" format
+            after any diagnostics are printed, showing the result of applying
+            all fix-it hints. For the above example it would emit:
+                 --- spellcheck-fields.cc
+                 +++ spellcheck-fields.cc
+                 @@ -49,5 +49,5 @@
+
+                  color get_color(struct s *ptr)
+                  {
+                 -  return ptr->colour;
+                 +  return ptr->color;
+                  }
+    * The gcc and g++ driver programs will now provide suggestions for
+      misspelled arguments to command-line options.
+           $ gcc -c test.c -ftls-model=global-dinamic
+           gcc: error: unknown TLS model 'global-dinamic'
+           gcc: note: valid arguments to '-ftls-model=' are: global-
+           dynamic initial-exec local-dynamic local-exec; did you mean
+           'global-dynamic'?
+    * The compiler will now provide suggestions for misspelled parameters.
+           $ gcc -c test.c --param max-early-inliner-iteration=3
+           cc1: error: invalid --param name 'max-early-inliner-iteration';
+           did you mean 'max-early-inliner-iterations'?
+    * Profile-guided optimization (PGO) instrumentation, as well as test
+      coverage (GCOV), can newly instrument constructors (functions marks with
+      __attribute__((constructor))), destructors and C++ constructors (and
+      destructors) of classes that are used as a type of a global variable.
+    * A new option -fprofile-update=atomic prevents creation of corrupted
+      profiles created during instrumentation run (-fprofile=generate) of an
+      application. Downside of the option is a speed penalty. Providing -
+      pthread on command line would result in selection of atomic profile
+      updating (when supports by a target).
+    * GCC's already extensive testsuite has gained some new capabilities, to
+      further improve the reliability of the compiler:
+          o GCC now has has an internal unit testing API and a suite of tests
+            for programmatic self-testing of subsystems.
+          o GCC's C frontend has been extended so that it can parse dumps of
+            GCC's internal representations, allowing for DejaGnu tests that
+            more directly exercise specific optimization passes. This covers
+            both the GIMPLE_representation (for testing higher-level
+            optimizations) and the RTL_representation, allowing for more direct
+            testing of lower-level details, such as register allocation and
+            instruction selection.
+
+     For questions related to the use of GCC, please consult these web
+     pages and the GCC_manuals. If that fails, the gcc-help@gcc.gnu.org
+     mailing list might help. Comments on these web pages and the
+     development of GCC are welcome on our developer list at
+     gcc@gcc.gnu.org. All of our_lists have public archives.
+
+Copyright (C) Free Software Foundation, Inc. Verbatim copying and
+distribution of this entire article is permitted in any medium,
+provided this notice is preserved.  These pages are maintained by the
+GCC team. Last modified 2017-05-01.
