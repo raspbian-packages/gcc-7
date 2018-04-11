@@ -1,0 +1,704 @@
+# DP: Fix PR libstdc++/85222, taken from the trunk
+
+libstdc++-v3/
+
+2018-04-10  Jonathan Wakely  <jwakely@redhat.com>
+
+	PR libstdc++/85222
+	* src/c++11/Makefile.am [ENABLE_DUAL_ABI]: Add special rules for
+	cxx11-ios_failure.cc to rewrite type info for __ios_failure.
+	* src/c++11/Makefile.in: Regenerate.
+	* src/c++11/cxx11-ios_failure.cc (__ios_failure, __iosfail_type_info):
+	New types.
+	[_GLIBCXX_USE_DUAL_ABI] (__throw_ios_failure): Define here.
+	* src/c++11/ios.cc (__throw_ios_failure): Remove definition.
+	* src/c++98/ios_failure.cc (__construct_ios_failure)
+	(__destroy_ios_failure, is_ios_failure_handler): New functions.
+	[!_GLIBCXX_USE_DUAL_ABI] (__throw_ios_failure): Define here.
+	* testsuite/27_io/ios_base/failure/dual_abi.cc: New.
+	* testsuite/27_io/basic_ios/copyfmt/char/1.cc: Revert changes to
+	handler types, to always catch std::ios_base::failure.
+	* testsuite/27_io/basic_ios/exceptions/char/1.cc: Likewise.
+	* testsuite/27_io/basic_istream/extractors_arithmetic/char/
+	exceptions_failbit.cc: Likewise.
+	* testsuite/27_io/basic_istream/extractors_arithmetic/wchar_t/
+	exceptions_failbit.cc: Likewise.
+	* testsuite/27_io/basic_istream/extractors_other/char/
+	exceptions_null.cc: Likewise.
+	* testsuite/27_io/basic_istream/extractors_other/wchar_t/
+	exceptions_null.cc: Likewise.
+	* testsuite/27_io/basic_istream/sentry/char/12297.cc: Likewise.
+	* testsuite/27_io/basic_istream/sentry/wchar_t/12297.cc: Likewise.
+	* testsuite/27_io/basic_ostream/inserters_other/char/
+	exceptions_null.cc: Likewise.
+	* testsuite/27_io/basic_ostream/inserters_other/wchar_t/
+	exceptions_null.cc: Likewise.
+	* testsuite/27_io/ios_base/storage/2.cc: Likewise.
+
+Index: libstdc++-v3/src/c++98/ios_failure.cc
+===================================================================
+--- a/src/libstdc++-v3/src/c++98/ios_failure.cc	(revision 259280)
++++ a/src/libstdc++-v3/src/c++98/ios_failure.cc	(revision 259281)
+@@ -29,6 +29,18 @@
+ #define _GLIBCXX_USE_CXX11_ABI 0
+ #include <ios>
+ 
++#if _GLIBCXX_USE_DUAL_ABI && __cpp_rtti
++#include <cxxabi.h>
++#include <typeinfo>
++#endif
++
++#ifdef _GLIBCXX_USE_NLS
++# include <libintl.h>
++# define _(msgid)   gettext (msgid)
++#else
++# define _(msgid)   (msgid)
++#endif
++
+ namespace std _GLIBCXX_VISIBILITY(default)
+ {
+ _GLIBCXX_BEGIN_NAMESPACE_VERSION
+@@ -43,5 +55,40 @@
+   ios_base::failure::what() const throw()
+   { return _M_msg.c_str(); }
+ 
++#if _GLIBCXX_USE_DUAL_ABI
++  // When the dual ABI is enabled __throw_ios_failure() is defined in
++  // src/c++11/ios_failure.cc
++#if __cpp_rtti
++  // If RTTI is enabled the exception type thrown will use these functions to
++  // construct/destroy a gcc4-compatible ios::failure object in a buffer,
++  // and to catch that object via a handler of the gcc4-compatible type.
++  void
++  __construct_ios_failure(void* buf, const char* msg)
++  { ::new(buf) ios_base::failure(msg); }
++
++  void
++  __destroy_ios_failure(void* buf)
++  { static_cast<ios_base::failure*>(buf)->~failure(); }
++
++  bool
++  __is_ios_failure_handler(const __cxxabiv1::__class_type_info* type)
++  { return *type == typeid(ios::failure); }
++
++  namespace {
++  // C++98-style static assertions to ensure ios::failure fits in a buffer
++  // with the same size and alignment as runtime_error:
++  typedef char S[1 / (sizeof(ios::failure) <= sizeof(runtime_error))];
++  typedef char A[1 / (__alignof(ios::failure) <= __alignof(runtime_error))];
++  }
++#endif // __cpp_rtti
++
++#else // ! _GLIBCXX_USE_DUAL_ABI
++
++  void
++  __throw_ios_failure(const char* __s __attribute__((unused)))
++  { _GLIBCXX_THROW_OR_ABORT(ios::failure(_(__s))); }
++
++#endif
++
+ _GLIBCXX_END_NAMESPACE_VERSION
+ } // namespace
+Index: libstdc++-v3/src/c++11/Makefile.in
+===================================================================
+--- a/src/libstdc++-v3/src/c++11/Makefile.in	(revision 259280)
++++ a/src/libstdc++-v3/src/c++11/Makefile.in	(revision 259281)
+@@ -434,6 +434,13 @@
+ 
+ libc__11convenience_la_SOURCES = $(sources)  $(inst_sources)
+ 
++# Rewrite the type info for __dual_abi_ios_failure.
++@ENABLE_DUAL_ABI_TRUE@rewrite_ios_failure_typeinfo = sed -e '/^_ZTISt13__ios_failure:$$/{' \
++@ENABLE_DUAL_ABI_TRUE@	-e 'n' \
++@ENABLE_DUAL_ABI_TRUE@	-e 's/_ZTVN10__cxxabiv120__si_class_type_infoE/_ZTVSt19__iosfail_type_info/' \
++@ENABLE_DUAL_ABI_TRUE@	-e '}'
++
++
+ # AM_CXXFLAGS needs to be in each subdirectory so that it can be
+ # modified in a per-library or per-sub-library way.  Need to manually
+ # set this option because CONFIG_CXXFLAGS has to be after
+@@ -749,6 +756,21 @@
+ hashtable_c++0x.o: hashtable_c++0x.cc
+ 	$(CXXCOMPILE) -fimplicit-templates -c $<
+ 
++@ENABLE_DUAL_ABI_TRUE@cxx11-ios_failure-lt.s: cxx11-ios_failure.cc
++@ENABLE_DUAL_ABI_TRUE@	$(LTCXXCOMPILE) -S $< -o tmp-cxx11-ios_failure-lt.s
++@ENABLE_DUAL_ABI_TRUE@	-test -f tmp-cxx11-ios_failure-lt.o && mv -f tmp-cxx11-ios_failure-lt.o tmp-cxx11-ios_failure-lt.s
++@ENABLE_DUAL_ABI_TRUE@	$(rewrite_ios_failure_typeinfo) tmp-$@ > $@
++@ENABLE_DUAL_ABI_TRUE@	-rm -f tmp-$@
++@ENABLE_DUAL_ABI_TRUE@cxx11-ios_failure.s: cxx11-ios_failure.cc
++@ENABLE_DUAL_ABI_TRUE@	$(CXXCOMPILE) -S $< -o tmp-$@
++@ENABLE_DUAL_ABI_TRUE@	$(rewrite_ios_failure_typeinfo) tmp-$@ > $@
++@ENABLE_DUAL_ABI_TRUE@	-rm -f tmp-$@
++
++@ENABLE_DUAL_ABI_TRUE@cxx11-ios_failure.lo: cxx11-ios_failure-lt.s
++@ENABLE_DUAL_ABI_TRUE@	$(LTCXXCOMPILE) -c $< -o $@
++@ENABLE_DUAL_ABI_TRUE@cxx11-ios_failure.o: cxx11-ios_failure.s
++@ENABLE_DUAL_ABI_TRUE@	$(CXXCOMPILE) -c $<
++
+ # Tell versions [3.59,3.63) of GNU make to not export all variables.
+ # Otherwise a system limit (for SysV at least) may be exceeded.
+ .NOEXPORT:
+Index: libstdc++-v3/src/c++11/ios.cc
+===================================================================
+--- a/src/libstdc++-v3/src/c++11/ios.cc	(revision 259280)
++++ a/src/libstdc++-v3/src/c++11/ios.cc	(revision 259281)
+@@ -32,23 +32,11 @@
+ 
+ #include <ios>
+ #include <limits>
+-#include <bits/functexcept.h>
+ 
+-#ifdef _GLIBCXX_USE_NLS
+-# include <libintl.h>
+-# define _(msgid)   gettext (msgid)
+-#else
+-# define _(msgid)   (msgid)
+-#endif
+-
+ namespace std _GLIBCXX_VISIBILITY(default)
+ {
+ _GLIBCXX_BEGIN_NAMESPACE_VERSION
+ 
+-  void
+-  __throw_ios_failure(const char* __s __attribute__((unused)))
+-  { _GLIBCXX_THROW_OR_ABORT(ios_base::failure(_(__s))); }
+-
+   // Definitions for static const members of ios_base.
+   const ios_base::fmtflags ios_base::boolalpha;
+   const ios_base::fmtflags ios_base::dec;
+Index: libstdc++-v3/src/c++11/cxx11-ios_failure.cc
+===================================================================
+--- a/src/libstdc++-v3/src/c++11/cxx11-ios_failure.cc	(revision 259280)
++++ a/src/libstdc++-v3/src/c++11/cxx11-ios_failure.cc	(revision 259281)
+@@ -28,7 +28,16 @@
+ 
+ #define _GLIBCXX_USE_CXX11_ABI 1
+ #include <ios>
++#include <bits/functexcept.h>
++#include <cxxabi.h>
+ 
++#ifdef _GLIBCXX_USE_NLS
++# include <libintl.h>
++# define _(msgid)   gettext (msgid)
++#else
++# define _(msgid)   (msgid)
++#endif
++
+ #if ! _GLIBCXX_USE_DUAL_ABI
+ # error This file should not be compiled for this configuration.
+ #endif
+@@ -91,5 +100,66 @@
+   ios_base::failure::what() const throw()
+   { return runtime_error::what(); }
+ 
++#if __cpp_rtti
++  // These functions are defined in src/c++98/ios_failure.cc
++  extern void __construct_ios_failure(void*, const char*);
++  extern void __destroy_ios_failure(void*);
++  extern bool __is_ios_failure_handler(const __cxxabiv1::__class_type_info*);
++
++  // The type thrown to report errors during stream buffer operations.
++  // In addition to the ios::failure[abi:cxx11] base class it also has a
++  // member of the gcc4-compatible ios::failure type (in an opaque buffer).
++  struct __ios_failure : std::ios::failure
++  {
++    __ios_failure(const char* s) : failure(s)
++    { __construct_ios_failure(buf, runtime_error::what()); }
++
++    ~__ios_failure()
++    { __destroy_ios_failure(buf); }
++
++    // Use std::runtime_error as a proxy for the gcc4-compatible ios::failure
++    // (which can't be declared here because _GLIBCXX_USE_CXX11_ABI == 1).
++    // There are assertions in src/c++98/ios_failure.cc to ensure the size
++    // and alignment assumptions are valid.
++    alignas(runtime_error) unsigned char buf[sizeof(runtime_error)];
++  };
++
++  // Custom type info for __ios_failure.
++  class __iosfail_type_info : __cxxabiv1::__si_class_type_info
++  {
++    ~__iosfail_type_info();
++
++    bool
++    __do_upcast (const __class_type_info *dst_type,
++		 void **obj_ptr) const override;
++  };
++
++  __iosfail_type_info::~__iosfail_type_info() = default;
++
++  // This function gets called to see if an exception of type
++  // __ios_failure can be upcast to the type in a catch handler.
++  bool
++  __iosfail_type_info::__do_upcast(const __class_type_info *dst_type,
++			        void **obj_ptr) const
++  {
++    // If the handler is for the gcc4-compatible ios::failure type then
++    // catch the object stored in __ios_failure::buf instead of
++    // the __ios_failure exception object itself.
++    if (__is_ios_failure_handler(dst_type))
++      {
++	*obj_ptr = static_cast<__ios_failure*>(*obj_ptr)->buf;
++	return true;
++      }
++    // Otherwise proceeed as normal to see if the handler matches.
++    return __class_type_info::__do_upcast(dst_type, obj_ptr);
++  }
++#else // ! __cpp_rtti
++  using __ios_failure = ios::failure;
++#endif
++
++  void
++  __throw_ios_failure(const char* __s __attribute__((unused)))
++  { _GLIBCXX_THROW_OR_ABORT(__ios_failure(_(__s))); }
++
+ _GLIBCXX_END_NAMESPACE_VERSION
+ } // namespace
+Index: libstdc++-v3/src/c++11/Makefile.am
+===================================================================
+--- a/src/libstdc++-v3/src/c++11/Makefile.am	(revision 259280)
++++ a/src/libstdc++-v3/src/c++11/Makefile.am	(revision 259281)
+@@ -126,6 +126,29 @@
+ hashtable_c++0x.o: hashtable_c++0x.cc
+ 	$(CXXCOMPILE) -fimplicit-templates -c $<
+ 
++if ENABLE_DUAL_ABI
++# Rewrite the type info for __dual_abi_ios_failure.
++rewrite_ios_failure_typeinfo = sed -e '/^_ZTISt13__ios_failure:$$/{' \
++	-e 'n' \
++	-e 's/_ZTVN10__cxxabiv120__si_class_type_infoE/_ZTVSt19__iosfail_type_info/' \
++	-e '}'
++
++cxx11-ios_failure-lt.s: cxx11-ios_failure.cc
++	$(LTCXXCOMPILE) -S $< -o tmp-cxx11-ios_failure-lt.s
++	-test -f tmp-cxx11-ios_failure-lt.o && mv -f tmp-cxx11-ios_failure-lt.o tmp-cxx11-ios_failure-lt.s
++	$(rewrite_ios_failure_typeinfo) tmp-$@ > $@
++	-rm -f tmp-$@
++cxx11-ios_failure.s: cxx11-ios_failure.cc
++	$(CXXCOMPILE) -S $< -o tmp-$@
++	$(rewrite_ios_failure_typeinfo) tmp-$@ > $@
++	-rm -f tmp-$@
++
++cxx11-ios_failure.lo: cxx11-ios_failure-lt.s
++	$(LTCXXCOMPILE) -c $< -o $@
++cxx11-ios_failure.o: cxx11-ios_failure.s
++	$(CXXCOMPILE) -c $<
++endif
++
+ # AM_CXXFLAGS needs to be in each subdirectory so that it can be
+ # modified in a per-library or per-sub-library way.  Need to manually
+ # set this option because CONFIG_CXXFLAGS has to be after
+Index: libstdc++-v3/testsuite/27_io/ios_base/storage/2.cc
+===================================================================
+--- a/src/libstdc++-v3/testsuite/27_io/ios_base/storage/2.cc	(revision 259280)
++++ a/src/libstdc++-v3/testsuite/27_io/ios_base/storage/2.cc	(revision 259281)
+@@ -50,18 +50,11 @@
+   ios.pword(1) = v;
+   VERIFY( ios.pword(1) == v );
+ 
+-  // The library throws the new definition of std::ios::failure
+-#if _GLIBCXX_USE_CXX11_ABI
+-    typedef std::ios_base::failure exception_type;
+-#else
+-    typedef std::exception exception_type;
+-#endif
+-
+   try
+     {
+       v = ios.pword(max);
+     }
+-  catch(exception_type&)
++  catch(std::ios_base::failure&)
+     {
+       // Ok.
+       VERIFY( ios.bad() );
+@@ -80,7 +73,7 @@
+     {
+       v = ios.pword(std::numeric_limits<int>::max());
+     }
+-  catch(exception_type&)
++  catch(std::ios_base::failure&)
+     {
+       // Ok.
+       VERIFY( ios.bad() );
+@@ -99,7 +92,7 @@
+     {
+       l = ios.iword(max);
+     }
+-  catch(exception_type&)
++  catch(std::ios_base::failure&)
+     {
+       // Ok.
+       VERIFY( ios.bad() );
+@@ -118,7 +111,7 @@
+     {
+       l = ios.iword(std::numeric_limits<int>::max());
+     }
+-  catch(exception_type&)
++  catch(std::ios_base::failure&)
+     {
+       // Ok.
+       VERIFY( ios.bad() );
+Index: libstdc++-v3/testsuite/27_io/ios_base/failure/dual_abi.cc
+===================================================================
+--- a/src/libstdc++-v3/testsuite/27_io/ios_base/failure/dual_abi.cc	(nonexistent)
++++ a/src/libstdc++-v3/testsuite/27_io/ios_base/failure/dual_abi.cc	(revision 259281)
+@@ -0,0 +1,99 @@
++// Copyright (C) 2018 Free Software Foundation, Inc.
++//
++// This file is part of the GNU ISO C++ Library.  This library is free
++// software; you can redistribute it and/or modify it under the
++// terms of the GNU General Public License as published by the
++// Free Software Foundation; either version 3, or (at your option)
++// any later version.
++
++// This library is distributed in the hope that it will be useful,
++// but WITHOUT ANY WARRANTY; without even the implied warranty of
++// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++// GNU General Public License for more details.
++
++// You should have received a copy of the GNU General Public License along
++// with this library; see the file COPYING3.  If not see
++// <http://www.gnu.org/licenses/>.
++
++// { dg-options "-D_GLIBCXX_USE_CXX11_ABI=0" }
++// { dg-do run { target c++11 } }
++
++#include <fstream>
++#include <system_error>
++#include <testsuite_hooks.h>
++
++void
++test01()
++{
++  using std::ios;
++  bool caught_ios_failure = false;
++  bool rethrown = false;
++  bool caught_system_error = false;
++  try {
++    std::ifstream f;
++    f.exceptions(ios::failbit | ios::badbit | ios::eofbit);
++    try {
++      f.get();
++    }
++    catch (const ios::failure&) // catch as old ABI type
++    {
++      caught_ios_failure = true;
++#if _GLIBCXX_USE_DUAL_ABI || _GLIBCXX_USE_CXX11_ABI == 1
++      rethrown = true;
++      throw; // re-throw, to catch as new ABI type
++#endif
++    }
++  }
++  catch (const std::system_error& e)
++  {
++    caught_system_error = true;
++  }
++
++  VERIFY( caught_ios_failure );
++  if (rethrown)
++    VERIFY( caught_system_error );
++}
++
++void
++test02()
++{
++  using std::ios;
++  const std::exception* p = nullptr;
++  bool caught_ios_failure = false;
++  bool caught_exception = false;
++  try {
++    std::ifstream f;
++    f.exceptions(ios::failbit | ios::badbit | ios::eofbit);
++    try {
++      f.get();
++    }
++    catch (const std::exception& e1)
++    {
++      caught_exception = true;
++      p = &e1;
++      throw;
++    }
++  }
++  catch (const ios::failure& e2)
++  {
++    caught_ios_failure = true;
++#if _GLIBCXX_USE_DUAL_ABI
++    // If the Dual ABI is active the library throws the new type,
++    // so e1 was an object of that new type and so &e1 != &e2.
++    VERIFY( p != &e2 );
++#else
++    // Otherwise there's only one type of ios::failure, so &e1 == &e2.
++    VERIFY( p == &e2 );
++#endif
++  }
++
++  VERIFY( caught_exception );
++  VERIFY( caught_ios_failure );
++}
++
++int
++main()
++{
++  test01();
++  test02();
++}
+Index: libstdc++-v3/testsuite/27_io/basic_ios/copyfmt/char/1.cc
+===================================================================
+--- a/src/libstdc++-v3/testsuite/27_io/basic_ios/copyfmt/char/1.cc	(revision 259280)
++++ a/src/libstdc++-v3/testsuite/27_io/basic_ios/copyfmt/char/1.cc	(revision 259281)
+@@ -46,13 +46,6 @@
+   }
+ 
+   {
+-    // The library throws the new definition of std::ios::failure
+-#if _GLIBCXX_USE_CXX11_ABI
+-    typedef std::ios_base::failure exception_type;
+-#else
+-    typedef std::exception exception_type;
+-#endif
+-
+     std::ios ios_01(0);
+     std::ios ios_02(0);
+     ios_01.clear(std::ios_base::eofbit);
+@@ -62,7 +55,7 @@
+       ios_01.copyfmt(ios_02);
+       VERIFY( false );
+     }
+-    catch(exception_type&) {
++    catch(std::ios_base::failure&) {
+       VERIFY( true );
+     }
+     catch(...) {
+Index: libstdc++-v3/testsuite/27_io/basic_ios/exceptions/char/1.cc
+===================================================================
+--- a/src/libstdc++-v3/testsuite/27_io/basic_ios/exceptions/char/1.cc	(revision 259280)
++++ a/src/libstdc++-v3/testsuite/27_io/basic_ios/exceptions/char/1.cc	(revision 259281)
+@@ -50,13 +50,6 @@
+   }
+ 
+   {
+-    // The library throws the new definition of std::ios::failure
+-#if _GLIBCXX_USE_CXX11_ABI
+-    typedef std::ios_base::failure exception_type;
+-#else
+-    typedef std::exception exception_type;
+-#endif
+-
+     std::ios ios_01(0);
+     ios_01.clear(std::ios_base::eofbit);
+     try {
+@@ -63,7 +56,7 @@
+       ios_01.exceptions(std::ios_base::eofbit);
+       VERIFY( false );
+     }
+-    catch(exception_type&) {
++    catch(std::ios_base::failure&) {
+       iostate02 = ios_01.exceptions();
+       VERIFY( static_cast<bool>(iostate02 & std::ios_base::eofbit) );
+     }
+Index: libstdc++-v3/testsuite/27_io/basic_istream/sentry/wchar_t/12297.cc
+===================================================================
+--- a/src/libstdc++-v3/testsuite/27_io/basic_istream/sentry/wchar_t/12297.cc	(revision 259280)
++++ a/src/libstdc++-v3/testsuite/27_io/basic_istream/sentry/wchar_t/12297.cc	(revision 259281)
+@@ -26,19 +26,12 @@
+   wistringstream stream;
+   stream.exceptions(ios_base::eofbit);
+ 
+-  // The library throws the new definition of std::ios::failure
+-#if _GLIBCXX_USE_CXX11_ABI
+-    typedef std::ios_base::failure exception_type;
+-#else
+-    typedef std::exception exception_type;
+-#endif
+-
+   try
+     {
+       wistream::sentry sentry(stream, false);
+       VERIFY( false );
+     }
+-  catch (exception_type&)
++  catch (std::ios_base::failure&)
+     {
+       VERIFY( stream.rdstate() == (ios_base::eofbit | ios_base::failbit) );
+     }
+Index: libstdc++-v3/testsuite/27_io/basic_istream/sentry/char/12297.cc
+===================================================================
+--- a/src/libstdc++-v3/testsuite/27_io/basic_istream/sentry/char/12297.cc	(revision 259280)
++++ a/src/libstdc++-v3/testsuite/27_io/basic_istream/sentry/char/12297.cc	(revision 259281)
+@@ -26,19 +26,12 @@
+   istringstream stream;
+   stream.exceptions(ios_base::eofbit);
+ 
+-  // The library throws the new definition of std::ios::failure
+-#if _GLIBCXX_USE_CXX11_ABI
+-    typedef std::ios_base::failure exception_type;
+-#else
+-    typedef std::exception exception_type;
+-#endif
+-
+   try
+     {
+       istream::sentry sentry(stream, false);
+       VERIFY( false );
+     }
+-  catch (exception_type&)
++  catch (std::ios_base::failure&)
+     {
+       VERIFY( stream.rdstate() == (ios_base::eofbit | ios_base::failbit) );
+     }
+Index: libstdc++-v3/testsuite/27_io/basic_istream/extractors_other/wchar_t/exceptions_null.cc
+===================================================================
+--- a/src/libstdc++-v3/testsuite/27_io/basic_istream/extractors_other/wchar_t/exceptions_null.cc	(revision 259280)
++++ a/src/libstdc++-v3/testsuite/27_io/basic_istream/extractors_other/wchar_t/exceptions_null.cc	(revision 259281)
+@@ -35,19 +35,12 @@
+   wistringstream stream;
+   stream.exceptions(ios_base::failbit);
+ 
+-  // The library throws the new definition of std::ios::failure
+-#if _GLIBCXX_USE_CXX11_ABI
+-    typedef std::ios_base::failure exception_type;
+-#else
+-    typedef std::exception exception_type;
+-#endif
+-
+   try
+     {
+       stream >> static_cast<wstreambuf*>(0);
+       VERIFY( false );
+     }
+-  catch (exception_type&)
++  catch (std::ios_base::failure&)
+     {
+     }
+ 
+Index: libstdc++-v3/testsuite/27_io/basic_istream/extractors_other/char/exceptions_null.cc
+===================================================================
+--- a/src/libstdc++-v3/testsuite/27_io/basic_istream/extractors_other/char/exceptions_null.cc	(revision 259280)
++++ a/src/libstdc++-v3/testsuite/27_io/basic_istream/extractors_other/char/exceptions_null.cc	(revision 259281)
+@@ -35,19 +35,12 @@
+   istringstream stream;
+   stream.exceptions(ios_base::failbit);
+ 
+-  // The library throws the new definition of std::ios::failure
+-#if _GLIBCXX_USE_CXX11_ABI
+-    typedef std::ios_base::failure exception_type;
+-#else
+-    typedef std::exception exception_type;
+-#endif
+-
+   try
+     {
+       stream >> static_cast<streambuf*>(0);
+       VERIFY(false);
+     }
+-  catch (exception_type&)
++  catch (std::ios_base::failure&)
+     {
+     }
+ 
+Index: libstdc++-v3/testsuite/27_io/basic_istream/extractors_arithmetic/wchar_t/exceptions_failbit.cc
+===================================================================
+--- a/src/libstdc++-v3/testsuite/27_io/basic_istream/extractors_arithmetic/wchar_t/exceptions_failbit.cc	(revision 259280)
++++ a/src/libstdc++-v3/testsuite/27_io/basic_istream/extractors_arithmetic/wchar_t/exceptions_failbit.cc	(revision 259281)
+@@ -27,13 +27,6 @@
+   wistringstream stream(L"jaylib - champion sound");
+   stream.exceptions(ios_base::failbit);
+ 
+-  // The library throws the new definition of std::ios::failure
+-#if _GLIBCXX_USE_CXX11_ABI
+-    typedef std::ios_base::failure exception_type;
+-#else
+-    typedef std::exception exception_type;
+-#endif
+-
+   try
+     {
+       T i;
+@@ -40,7 +33,7 @@
+       stream >> i;
+       VERIFY( false );
+     }
+-  catch (const exception_type&)
++  catch (const std::ios_base::failure&)
+     {
+       // stream should set failbit and throw ios_base::failure.
+       VERIFY( stream.fail() );
+Index: libstdc++-v3/testsuite/27_io/basic_istream/extractors_arithmetic/char/exceptions_failbit.cc
+===================================================================
+--- a/src/libstdc++-v3/testsuite/27_io/basic_istream/extractors_arithmetic/char/exceptions_failbit.cc	(revision 259280)
++++ a/src/libstdc++-v3/testsuite/27_io/basic_istream/extractors_arithmetic/char/exceptions_failbit.cc	(revision 259281)
+@@ -27,13 +27,6 @@
+   istringstream stream("jaylib - champion sound");
+   stream.exceptions(ios_base::failbit);
+ 
+-  // The library throws the new definition of std::ios::failure
+-#if _GLIBCXX_USE_CXX11_ABI
+-    typedef std::ios_base::failure exception_type;
+-#else
+-    typedef std::exception exception_type;
+-#endif
+-
+   try
+     {
+       T i;
+@@ -40,7 +33,7 @@
+       stream >> i;
+       VERIFY( false );
+     }
+-  catch (const exception_type&)
++  catch (const std::ios_base::failure&)
+     {
+       // stream should set failbit and throw ios_base::failure.
+       VERIFY( stream.fail() );
+Index: libstdc++-v3/testsuite/27_io/basic_ostream/inserters_other/wchar_t/exceptions_null.cc
+===================================================================
+--- a/src/libstdc++-v3/testsuite/27_io/basic_ostream/inserters_other/wchar_t/exceptions_null.cc	(revision 259280)
++++ a/src/libstdc++-v3/testsuite/27_io/basic_ostream/inserters_other/wchar_t/exceptions_null.cc	(revision 259281)
+@@ -37,19 +37,12 @@
+   wostringstream stream;
+   stream.exceptions(ios_base::badbit);
+ 
+-  // The library throws the new definition of std::ios::failure
+-#if _GLIBCXX_USE_CXX11_ABI
+-    typedef std::ios_base::failure exception_type;
+-#else
+-    typedef std::exception exception_type;
+-#endif
+-
+   try
+     {
+       stream << static_cast<wstreambuf*>(0);
+       VERIFY( false );
+     }
+-  catch (exception_type&)
++  catch (std::ios_base::failure&)
+     {
+     }
+ 
+Index: libstdc++-v3/testsuite/27_io/basic_ostream/inserters_other/char/exceptions_null.cc
+===================================================================
+--- a/src/libstdc++-v3/testsuite/27_io/basic_ostream/inserters_other/char/exceptions_null.cc	(revision 259280)
++++ a/src/libstdc++-v3/testsuite/27_io/basic_ostream/inserters_other/char/exceptions_null.cc	(revision 259281)
+@@ -37,19 +37,12 @@
+   ostringstream stream;
+   stream.exceptions(ios_base::badbit);
+ 
+-  // The library throws the new definition of std::ios::failure
+-#if _GLIBCXX_USE_CXX11_ABI
+-    typedef std::ios_base::failure exception_type;
+-#else
+-    typedef std::exception exception_type;
+-#endif
+-
+   try
+     {
+       stream << static_cast<streambuf*>(0);
+       VERIFY( false );
+     }
+-  catch (exception_type&)
++  catch (std::ios_base::failure&)
+     {
+     }
+ 
