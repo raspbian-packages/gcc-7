@@ -1,0 +1,22 @@
+# DP: Enable decimal float support on kfreebsd-amd64
+
+--- a/src/gcc/configure.ac
++++ b/src/gcc/configure.ac
+@@ -817,6 +817,7 @@
+ [], [])
+ 
+ # Enable C extension for decimal float if target supports it.
++# touch the file, adding decimal support for kfreebsd-amd64 in config/dfp.m4
+ GCC_AC_ENABLE_DECIMAL_FLOAT([$target])
+ 
+ dfp=`if test $enable_decimal_float != no; then echo 1; else echo 0; fi`
+--- a/src/config/dfp.m4
++++ b/src/config/dfp.m4
+@@ -22,6 +22,7 @@
+   case $1 in
+     powerpc*-*-linux* | i?86*-*-linux* | x86_64*-*-linux* | s390*-*-linux* | \
+     i?86*-*-elfiamcu | i?86*-*-gnu* | \
++    i?86*-*-kfreebsd* | x86_64*-*-kfreebsd* | \
+     i?86*-*-mingw* | x86_64*-*-mingw* | \
+     i?86*-*-cygwin* | x86_64*-*-cygwin*)
+       enable_decimal_float=yes
