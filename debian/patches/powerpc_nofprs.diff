@@ -1,0 +1,85 @@
+Index: b/src/libgcc/config/rs6000/crtsavfpr.S
+===================================================================
+--- a/src/libgcc/config/rs6000/crtsavfpr.S
++++ b/src/libgcc/config/rs6000/crtsavfpr.S
+@@ -32,6 +32,7 @@
+ 
+ /* On PowerPC64 Linux, these functions are provided by the linker.  */
+ #ifndef __powerpc64__
++#ifndef __NO_FPRS__
+ 
+ /* Routines for saving floating point registers, called by the compiler.  */
+ /* Called with r11 pointing to the stack header word of the caller of the */
+@@ -78,3 +79,4 @@ FUNC_END(_savefpr_14)
+ CFI_ENDPROC
+ 
+ #endif
++#endif
+Index: b/src/libgcc/config/rs6000/crtresfpr.S
+===================================================================
+--- a/src/libgcc/config/rs6000/crtresfpr.S
++++ b/src/libgcc/config/rs6000/crtresfpr.S
+@@ -32,6 +32,7 @@
+ 
+ /* On PowerPC64 Linux, these functions are provided by the linker.  */
+ #ifndef __powerpc64__
++#ifndef __NO_FPRS__
+ 
+ /* Routines for restoring floating point registers, called by the compiler.  */
+ /* Called with r11 pointing to the stack header word of the caller of the */
+@@ -78,3 +79,4 @@ FUNC_END(_restfpr_14)
+ CFI_ENDPROC
+ 
+ #endif
++#endif
+Index: b/src/libgcc/config/rs6000/crtresxfpr.S
+===================================================================
+--- a/src/libgcc/config/rs6000/crtresxfpr.S
++++ b/src/libgcc/config/rs6000/crtresxfpr.S
+@@ -32,6 +32,7 @@
+ 
+ /* On PowerPC64 Linux, these functions are provided by the linker.  */
+ #ifndef __powerpc64__
++#ifndef __NO_FPRS__
+ 
+ /* Routines for restoring floating point registers, called by the compiler.  */
+ /* Called with r11 pointing to the stack header word of the caller of the */
+@@ -123,3 +124,4 @@ FUNC_END(_restfpr_14_x)
+ CFI_ENDPROC
+ 
+ #endif
++#endif
+Index: b/src/libgcc/config/rs6000/crtsavevr.S
+===================================================================
+--- a/src/libgcc/config/rs6000/crtsavevr.S
++++ b/src/libgcc/config/rs6000/crtsavevr.S
+@@ -24,6 +24,7 @@
+ 
+ /* On PowerPC64 Linux, these functions are provided by the linker.  */
+ #ifndef __powerpc64__
++#ifndef __NO_FPRS__
+ 
+ #undef __ALTIVEC__
+ #define __ALTIVEC__ 1
+@@ -86,3 +87,4 @@ FUNC_END(_savevr_20)
+ CFI_ENDPROC
+ 
+ #endif
++#endif
+Index: b/src/libgcc/config/rs6000/crtrestvr.S
+===================================================================
+--- a/src/libgcc/config/rs6000/crtrestvr.S
++++ b/src/libgcc/config/rs6000/crtrestvr.S
+@@ -24,6 +24,7 @@
+ 
+ /* On PowerPC64 Linux, these functions are provided by the linker.  */
+ #ifndef __powerpc64__
++#ifndef __NO_FPRS__
+ 
+ #undef __ALTIVEC__
+ #define __ALTIVEC__ 1
+@@ -86,3 +87,4 @@ FUNC_END(_restvr_20)
+ CFI_ENDPROC
+ 
+ #endif
++#endif
