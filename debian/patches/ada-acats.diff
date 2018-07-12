@@ -1,0 +1,13 @@
+# DP: remove blanks from target_bit, see https://bugs.debian.org/814978
+
+--- a/src/gcc/testsuite/ada/acats/run_all.sh
++++ b/src/gcc/testsuite/ada/acats/run_all.sh
+@@ -130,7 +130,7 @@
+    exit 1
+ fi
+ target_run $dir/support/impbit > $dir/support/impbit.out 2>&1
+-target_bit=`cat $dir/support/impbit.out`
++target_bit=`sed -e 's/[ \r]//g' $dir/support/impbit.out`
+ echo target_bit="$target_bit" >> $dir/acats.log
+ 
+ # Find out a suitable asm statement
