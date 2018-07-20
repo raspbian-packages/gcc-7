@@ -1,0 +1,87 @@
+Description: simplifiy detection of machine and version in command name
+ The previous algorithm wrongly tests "End_Of_Prefix > 1",
+ which may happen even if a match has been found.
+ .
+ This version reports problems, and always add the suffix to ensure
+ that the gcc called has the same version than the calling tool.
+ .
+ Log for bug 903694 carries regression tests for both bugs.
+ .
+ Note: for historical reasons, gnatchop carries its own version
+ of the old algorithm, which seems to work in our case.
+Bugs-Debian: https://bugs.debian.org/903694
+Bugs-Debian: https://bugs.debian.org/856274
+Author: Ludovic Brenta <lbrenta@debian.org>
+Author: Nicolas Boulenguez <nicolas@debian.org>
+
+--- a/src/gcc/ada/osint.adb
++++ b/src/gcc/ada/osint.adb
+@@ -2199,22 +2199,15 @@
+    ------------------
+ 
+    function Program_Name (Nam : String; Prog : String) return String_Access is
+-      End_Of_Prefix   : Natural := 0;
+       Start_Of_Prefix : Positive := 1;
+-      Start_Of_Suffix : Positive;
++      Suffix          : constant String := '-' & Gnatvsn.Library_Version;
+ 
+    begin
+       --  Get the name of the current program being executed
+ 
+       Find_Program_Name;
+ 
+-      Start_Of_Suffix := Name_Len + 1;
+-
+-      --  Find the target prefix if any, for the cross compilation case.
+-      --  For instance in "powerpc-elf-gcc" the target prefix is
+-      --  "powerpc-elf-"
+-      --  Ditto for suffix, e.g. in "gcc-4.1", the suffix is "-4.1"
+-
++      --  Find directory part if any, and ignore it from now on.
+       for J in reverse 1 .. Name_Len loop
+          if Name_Buffer (J) = '/'
+            or else Name_Buffer (J) = Directory_Separator
+@@ -2225,25 +2218,28 @@
+          end if;
+       end loop;
+ 
+-      --  Find End_Of_Prefix
+-
++      --  Find the target prefix if any, for the cross compilation case.
++      --  For instance in "powerpc-elf-gcc" the target prefix is
++      --  "powerpc-elf-"
++      --  Ditto for suffix, e.g. in "gcc-4.1", the suffix is "-4.1"
++      --  In other terms, search and replace Prog with Nam.
+       for J in Start_Of_Prefix .. Name_Len - Prog'Length + 1 loop
+          if Name_Buffer (J .. J + Prog'Length - 1) = Prog then
+-            End_Of_Prefix := J - 1;
+-            exit;
++
++            --  If suffix is present, it must match our version.
++            if J + Prog'Length < Name_Len
++              and then Name_Buffer (J + Prog'Length .. Name_Len) /= Suffix
++            then
++               Fail ("Osint.Program_Name: version mismatch in Debian");
++            end if;
++
++            --  Require our version, as gcc default may differ.
++            return new String'(Name_Buffer (Start_Of_Prefix .. J - 1)
++                                 & Nam & Suffix);
++
+          end if;
+       end loop;
+-
+-      if End_Of_Prefix > 1 then
+-         Start_Of_Suffix := End_Of_Prefix + Prog'Length + 1;
+-      end if;
+-
+-      --  Create the new program name
+-
+-      return new String'
+-        (Name_Buffer (Start_Of_Prefix .. End_Of_Prefix)
+-         & Nam
+-         & Name_Buffer (Start_Of_Suffix .. Name_Len));
++      Fail ("Osint.Program_Name: no match. Please report to Debian.");
+    end Program_Name;
+ 
+    ------------------------------
