@@ -1,0 +1,283 @@
+Running testsuite in /gcc-7-7.4.0/build/arm-linux-gnueabihf/libstdc++-v3/testsuite ...
+make[2]: Entering directory '/gcc-7-7.4.0'
+make[2]: warning: -j4 forced in submake: resetting jobserver mode.
+/usr/bin/make  check-DEJAGNU
+make[3]: Entering directory '/gcc-7-7.4.0/build/arm-linux-gnueabihf/libstdc++-v3/testsuite'
+Making a new site.exp file...
+AR="arm-linux-gnueabihf-ar"; export AR; \
+RANLIB="arm-linux-gnueabihf-ranlib"; export RANLIB; \
+if [ -z "" ] && [ -n "-j4" ]; then \
+  rm -rf normal-parallel || true; \
+  mkdir normal-parallel; \
+  /usr/bin/make  check-DEJAGNUnormal1 check-DEJAGNUnormal2 check-DEJAGNUnormal3 check-DEJAGNUnormal4 check-DEJAGNUnormal5 check-DEJAGNUnormal6 check-DEJAGNUnormal7 check-DEJAGNUnormal8 check-DEJAGNUnormal9 check-DEJAGNUnormal10 check-DEJAGNUnormal11 check-DEJAGNUnormal12 check-DEJAGNUnormal13 check-DEJAGNUnormal14 check-DEJAGNUnormal15 check-DEJAGNUnormal16 check-DEJAGNUnormal17 check-DEJAGNUnormal18 check-DEJAGNUnormal19 check-DEJAGNUnormal20 check-DEJAGNUnormal21 check-DEJAGNUnormal22 check-DEJAGNUnormal23 check-DEJAGNUnormal24 check-DEJAGNUnormal25 check-DEJAGNUnormal26 check-DEJAGNUnormal27 check-DEJAGNUnormal28 check-DEJAGNUnormal29 check-DEJAGNUnormal30 check-DEJAGNUnormal31 check-DEJAGNUnormal32 check-DEJAGNUnormal33 check-DEJAGNUnormal34 check-DEJAGNUnormal35 check-DEJAGNUnormal36 check-DEJAGNUnormal37 check-DEJAGNUnormal38 check-DEJAGNUnormal39 check-DEJAGNUnormal40 check-DEJAGNUnormal41 check-DEJAGNUnormal42 check-DEJAGNUnormal43 check-DEJAGNUnormal44 check-DEJAGNUnormal45 check-DEJAGNUnormal46 check-DEJAGNUnormal47 check-DEJAGNUnormal48 check-DEJAGNUnormal49 check-DEJAGNUnormal50 check-DEJAGNUnormal51 check-DEJAGNUnormal52 check-DEJAGNUnormal53 check-DEJAGNUnormal54 check-DEJAGNUnormal55 check-DEJAGNUnormal56 check-DEJAGNUnormal57 check-DEJAGNUnormal58 check-DEJAGNUnormal59 check-DEJAGNUnormal60 check-DEJAGNUnormal61 check-DEJAGNUnormal62 check-DEJAGNUnormal63 check-DEJAGNUnormal64 check-DEJAGNUnormal65 check-DEJAGNUnormal66 check-DEJAGNUnormal67 check-DEJAGNUnormal68 check-DEJAGNUnormal69 check-DEJAGNUnormal70 check-DEJAGNUnormal71 check-DEJAGNUnormal72 check-DEJAGNUnormal73 check-DEJAGNUnormal74 check-DEJAGNUnormal75 check-DEJAGNUnormal76 check-DEJAGNUnormal77 check-DEJAGNUnormal78 check-DEJAGNUnormal79 check-DEJAGNUnormal80 check-DEJAGNUnormal81 check-DEJAGNUnormal82 check-DEJAGNUnormal83 check-DEJAGNUnormal84 check-DEJAGNUnormal85 check-DEJAGNUnormal86 check-DEJAGNUnormal87 check-DEJAGNUnormal88 check-DEJAGNUnormal89 check-DEJAGNUnormal90 check-DEJAGNUnormal91 check-DEJAGNUnormal92 check-DEJAGNUnormal93 check-DEJAGNUnormal94 check-DEJAGNUnormal95 check-DEJAGNUnormal96 check-DEJAGNUnormal97 check-DEJAGNUnormal98 check-DEJAGNUnormal99 check-DEJAGNUnormal100 check-DEJAGNUnormal101 check-DEJAGNUnormal102 check-DEJAGNUnormal103 check-DEJAGNUnormal104 check-DEJAGNUnormal105 check-DEJAGNUnormal106 check-DEJAGNUnormal107 check-DEJAGNUnormal108 check-DEJAGNUnormal109 check-DEJAGNUnormal110 check-DEJAGNUnormal111 check-DEJAGNUnormal112 check-DEJAGNUnormal113 check-DEJAGNUnormal114 check-DEJAGNUnormal115 check-DEJAGNUnormal116 check-DEJAGNUnormal117 check-DEJAGNUnormal118 check-DEJAGNUnormal119 check-DEJAGNUnormal120 check-DEJAGNUnormal121 check-DEJAGNUnormal122 check-DEJAGNUnormal123 check-DEJAGNUnormal124 check-DEJAGNUnormal125 check-DEJAGNUnormal126 check-DEJAGNUnormal127 check-DEJAGNUnormal128; \
+  rm -rf normal-parallel || true; \
+  for idx in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29 30 31 32 33 34 35 36 37 38 39 40 41 42 43 44 45 46 47 48 49 50 51 52 53 54 55 56 57 58 59 60 61 62 63 64 65 66 67 68 69 70 71 72 73 74 75 76 77 78 79 80 81 82 83 84 85 86 87 88 89 90 91 92 93 94 95 96 97 98 99 100 101 102 103 104 105 106 107 108 109 110 111 112 113 114 115 116 117 118 119 120 121 122 123 124 125 126 127 128; do \
+    if [ -d normal$idx ]; then \
+      mv -f normal$idx/libstdc++.sum normal$idx/libstdc++.sum.sep; \
+      mv -f normal$idx/libstdc++.log normal$idx/libstdc++.log.sep; \
+    fi; \
+  done; \
+  /bin/bash ../../../../src/libstdc++-v3/testsuite/../../contrib/dg-extract-results.sh \
+    normal[0-9]*/libstdc++.sum.sep > libstdc++.sum; \
+  /bin/bash ../../../../src/libstdc++-v3/testsuite/../../contrib/dg-extract-results.sh -L \
+    normal[0-9]*/libstdc++.log.sep > libstdc++.log; \
+  exit 0; \
+fi; \
+srcdir=`CDPATH="${ZSH_VERSION+.}:" && cd ../../../../src/libstdc++-v3/testsuite && pwd`; export srcdir; \
+EXPECT=expect; export EXPECT; \
+runtest=; \
+if [ -z "$runtest" ]; then runtest=runtest; fi; \
+tool=libstdc++; \
+if [ -n "" ]; then \
+  if [ -f normal-parallel/finished ]; then rm -rf ""; exit 0; fi; \
+  GCC_RUNTEST_PARALLELIZE_DIR=`${PWDCMD-pwd}`/normal-parallel; \
+  export GCC_RUNTEST_PARALLELIZE_DIR; \
+  cd ""; \
+fi; \
+if /bin/bash -c "$runtest --version" > /dev/null 2>&1; then \
+  $runtest  --tool $tool --srcdir $srcdir \
+	    --target_board=unix\{,-fstack-protector\}; \
+  if [ -n "" ]; then \
+    touch $GCC_RUNTEST_PARALLELIZE_DIR/finished; \
+  fi; \
+else \
+  echo "WARNING: could not find \`runtest'" 1>&2; :;\
+fi
+make[4]: Entering directory '/gcc-7-7.4.0/build/arm-linux-gnueabihf/libstdc++-v3/testsuite'
+Using /gcc-7-7.4.0/src/libstdc++-v3/testsuite/lib/libstdc++.exp as tool init file.
+Using /gcc-7-7.4.0/src/libstdc++-v3/testsuite/lib/libstdc++.exp as tool init file.
+Using /gcc-7-7.4.0/src/libstdc++-v3/testsuite/lib/libstdc++.exp as tool init file.
+Using /gcc-7-7.4.0/src/libstdc++-v3/testsuite/lib/libstdc++.exp as tool init file.
+Test run by root on Sun Sep 15 10:48:04 2019
+Test run by root on Sun Sep 15 10:48:04 2019
+Test run by root on Sun Sep 15 10:48:04 2019
+Native configuration is arm-unknown-linux-gnueabihf
+Test run by root on Sun Sep 15 10:48:04 2019
+
+		=== libstdc++ tests ===
+
+Native configuration is arm-unknown-linux-gnueabihf
+Native configuration is arm-unknown-linux-gnueabihf
+
+		=== libstdc++ tests ===
+
+
+		=== libstdc++ tests ===
+
+Native configuration is arm-unknown-linux-gnueabihf
+
+		=== libstdc++ tests ===
+
+Schedule of variations:
+Schedule of variations:
+    unix
+    unix
+    unix/-fstack-protector
+
+    unix/-fstack-protector
+
+Running target unix
+Schedule of variations:
+Running target unix
+    unix
+    unix/-fstack-protector
+Schedule of variations:
+
+    unix
+    unix/-fstack-protector
+
+Running target unix
+Running target unix
+Using /usr/share/dejagnu/baseboards/unix.exp as board description file for target.
+Using /usr/share/dejagnu/baseboards/unix.exp as board description file for target.
+Using /usr/share/dejagnu/baseboards/unix.exp as board description file for target.
+Using /usr/share/dejagnu/config/unix.exp as generic interface file for target.
+Using /usr/share/dejagnu/baseboards/unix.exp as board description file for target.
+Using /usr/share/dejagnu/config/unix.exp as generic interface file for target.
+Using /usr/share/dejagnu/config/unix.exp as generic interface file for target.
+Using /usr/share/dejagnu/config/unix.exp as generic interface file for target.
+Using /gcc-7-7.4.0/src/libstdc++-v3/testsuite/config/default.exp as tool-and-target-specific interface file.
+Using /gcc-7-7.4.0/src/libstdc++-v3/testsuite/config/default.exp as tool-and-target-specific interface file.
+Using /gcc-7-7.4.0/src/libstdc++-v3/testsuite/config/default.exp as tool-and-target-specific interface file.
+Using /gcc-7-7.4.0/src/libstdc++-v3/testsuite/config/default.exp as tool-and-target-specific interface file.
+Running /gcc-7-7.4.0/src/libstdc++-v3/testsuite/libstdc++-abi/abi.exp ...
+Running /gcc-7-7.4.0/src/libstdc++-v3/testsuite/libstdc++-abi/abi.exp ...
+Running /gcc-7-7.4.0/src/libstdc++-v3/testsuite/libstdc++-abi/abi.exp ...
+Running /gcc-7-7.4.0/src/libstdc++-v3/testsuite/libstdc++-abi/abi.exp ...
+/gcc-7-7.4.0/build/arm-linux-gnueabihf/./libstdc++-v3/scripts/testsuite_flags.installed: 90: Syntax error: Unterminated quoted string
+    while executing
+"exec sh $flags_file --build-cxx"
+    invoked from within
+"if [is_remote host] {
+	# A remote host does not, in general, have access to the
+	# $srcdir so we copy the testsuite headers into the current
+	# direct..."
+    (procedure "libstdc++_init" line 177)
+    invoked from within
+"${tool}_init $test_file_name"
+    (procedure "runtest" line 19)
+    invoked from within
+"runtest $test_name"
+    ("foreach" body line 42)
+    invoked from within
+"foreach test_name [lsort [find ${dir} *.exp]] {
+			if { ${test_name} == "" } {
+			    continue
+			}
+			# Ignore this one if asked to.
+			if { ${ignore..."
+    ("foreach" body line 57)
+    invoked from within
+"foreach dir "${test_top_dirs}" {
+		if { ${dir} != ${srcdir} } {
+		    # Ignore this directory if is a directory to be
+		    # ignored.
+		    if {[info..."
+    ("foreach" body line 120)
+    invoked from within
+"foreach pass $multipass {
+
+	# multipass_name is set for `record_test' to use (see framework.exp).
+	if { [lindex $pass 0] != "" } {
+	    set multipass_..."
+    ("foreach" body line 51)
+    invoked from within
+"foreach current_target $target_list {
+    verbose "target is $current_target"
+    set current_target_name $current_target
+    set tlist [split $curren..."
+    (file "/usr/share/dejagnu/runtest.exp" line 1618)/gcc-7-7.4.0/build/arm-linux-gnueabihf/./libstdc++-v3/scripts/testsuite_flags.installed: 90: Syntax error: Unterminated quoted string
+    while executing
+"exec sh $flags_file --build-cxx"
+    invoked from within
+"if [is_remote host] {
+	# A remote host does not, in general, have access to the
+	# $srcdir so we copy the testsuite headers into the current
+	# direct..."
+    (procedure "libstdc++_init" line 177)
+    invoked from within
+"${tool}_init $test_file_name"
+    (procedure "runtest" line 19)
+    invoked from within
+"runtest $test_name"
+    ("foreach" body line 42)
+    invoked from within
+"foreach test_name [lsort [find ${dir} *.exp]] {
+			if { ${test_name} == "" } {
+			    continue
+			}
+			# Ignore this one if asked to.
+			if { ${ignore..."
+    ("foreach" body line 57)
+    invoked from within
+"foreach dir "${test_top_dirs}" {
+		if { ${dir} != ${srcdir} } {
+		    # Ignore this directory if is a directory to be
+		    # ignored.
+		    if {[info..."
+    ("foreach" body line 120)
+    invoked from within
+"foreach pass $multipass {
+
+	# multipass_name is set for `record_test' to use (see framework.exp).
+	if { [lindex $pass 0] != "" } {
+	    set multipass_..."
+    ("foreach" body line 51)
+    invoked from within
+"foreach current_target $target_list {
+    verbose "target is $current_target"
+    set current_target_name $current_target
+    set tlist [split $curren..."
+    (file "/usr/share/dejagnu/runtest.exp" line 1618)/gcc-7-7.4.0/build/arm-linux-gnueabihf/./libstdc++-v3/scripts/testsuite_flags.installed: 90: Syntax error: Unterminated quoted string
+    while executing
+"exec sh $flags_file --build-cxx"
+    invoked from within
+"if [is_remote host] {
+	# A remote host does not, in general, have access to the
+	# $srcdir so we copy the testsuite headers into the current
+	# direct..."
+    (procedure "libstdc++_init" line 177)
+    invoked from within
+"${tool}_init $test_file_name"
+    (procedure "runtest" line 19)
+    invoked from within
+"runtest $test_name"
+    ("foreach" body line 42)
+    invoked from within
+"foreach test_name [lsort [find ${dir} *.exp]] {
+			if { ${test_name} == "" } {
+			    continue
+			}
+			# Ignore this one if asked to.
+			if { ${ignore..."
+    ("foreach" body line 57)
+    invoked from within
+"foreach dir "${test_top_dirs}" {
+		if { ${dir} != ${srcdir} } {
+		    # Ignore this directory if is a directory to be
+		    # ignored.
+		    if {[info..."
+    ("foreach" body line 120)
+    invoked from within
+"foreach pass $multipass {
+
+	# multipass_name is set for `record_test' to use (see framework.exp).
+	if { [lindex $pass 0] != "" } {
+	    set multipass_..."
+    ("foreach" body line 51)
+    invoked from within
+"foreach current_target $target_list {
+    verbose "target is $current_target"
+    set current_target_name $current_target
+    set tlist [split $curren..."
+    (file "/usr/share/dejagnu/runtest.exp" line 1618)
+
+/gcc-7-7.4.0/build/arm-linux-gnueabihf/./libstdc++-v3/scripts/testsuite_flags.installed: 90: Syntax error: Unterminated quoted string
+    while executing
+"exec sh $flags_file --build-cxx"
+    invoked from within
+"if [is_remote host] {
+	# A remote host does not, in general, have access to the
+	# $srcdir so we copy the testsuite headers into the current
+	# direct..."
+    (procedure "libstdc++_init" line 177)
+    invoked from within
+"${tool}_init $test_file_name"
+    (procedure "runtest" line 19)
+    invoked from within
+"runtest $test_name"
+    ("foreach" body line 42)
+    invoked from within
+"foreach test_name [lsort [find ${dir} *.exp]] {
+			if { ${test_name} == "" } {
+			    continue
+			}
+			# Ignore this one if asked to.
+			if { ${ignore..."
+    ("foreach" body line 57)
+    invoked from within
+"foreach dir "${test_top_dirs}" {
+		if { ${dir} != ${srcdir} } {
+		    # Ignore this directory if is a directory to be
+		    # ignored.
+		    if {[info..."
+    ("foreach" body line 120)
+    invoked from within
+"foreach pass $multipass {
+
+	# multipass_name is set for `record_test' to use (see framework.exp).
+	if { [lindex $pass 0] != "" } {
+	    set multipass_..."
+    ("foreach" body line 51)
+    invoked from within
+"foreach current_target $target_list {
+    verbose "target is $current_target"
+    set current_target_name $current_target
+    set tlist [split $curren..."
+    (file "/usr/share/dejagnu/runtest.exp" line 1618)
+
+make[4]: Leaving directory '/gcc-7-7.4.0/build/arm-linux-gnueabihf/libstdc++-v3/testsuite'
+normal1/libstdc++.sum.sep: no recognised summary line
+normal1/libstdc++.log.sep: no recognised summary line
+make[3]: Leaving directory '/gcc-7-7.4.0/build/arm-linux-gnueabihf/libstdc++-v3/testsuite'
+make[2]: Leaving directory '/gcc-7-7.4.0/build/arm-linux-gnueabihf/libstdc++-v3/testsuite'
